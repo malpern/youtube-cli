@@ -6,7 +6,6 @@ on:
 
 jobs:
   claude-review:
-    if: github.event.pull_request.draft == false && env.ANTHROPIC_API_KEY != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -16,12 +15,35 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     steps:
+      - name: Decide whether Claude review should run
+        id: preflight
+        shell: bash
+        run: |
+          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "reason=draft-pr" >> "$GITHUB_OUTPUT"
+          elif [[ -z "${ANTHROPIC_API_KEY}" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "reason=missing-anthropic-api-key" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "reason=ready" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip Claude review
+        if: steps.preflight.outputs.enabled != 'true'
+        shell: bash
+        run: |
+          echo "Skipping Claude review: ${{ steps.preflight.outputs.reason }}"
+
       - name: Check out repository
+        if: steps.preflight.outputs.enabled == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Review pull request with Claude
+        if: steps.preflight.outputs.enabled == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
