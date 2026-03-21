@@ -1,0 +1,11 @@
+{
+  "profileDir": "/absolute/path/to/chrome-profile-for-youtube-watchlist",
+  "expectedAccount": "Your YouTube account label fragment",
+  "browserExecutablePath": "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+  "browserCdpUrl": "http://127.0.0.1:9222",
+  "headless": false,
+  "artifactsDirName": "artifacts",
+  "stopOnAccountMismatch": true,
+  "slowMoMs": 0,
+  "youtubeBaseUrl": "https://www.youtube.com"
+}

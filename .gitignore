@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.local/
+runs/
+output-playlist-more-actions.png
+.DS_Store
+*.log

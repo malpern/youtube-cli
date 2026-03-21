@@ -1,0 +1,176 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { InventoryItem } from "../models/types.js";
+import { assertUsableSourceSnapshot, computeInventoryFingerprint, readSourceSnapshot, resolveSourceSnapshotPath } from "./sourceSnapshot.js";
+
+const tempDirs: string[] = [];
+
+function makeTempRoot(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "youtube-watchlist-test-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeInventory(rootDir: string, runId: string, items: InventoryItem[]): string {
+  const runDir = path.join(rootDir, "runs", runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  const inventoryPath = path.join(runDir, "inventory.json");
+  fs.writeFileSync(
+    inventoryPath,
+    `${JSON.stringify(
+      {
+        currentUrl: "https://www.youtube.com/playlist?list=WL",
+        capturedAt: "2026-03-21T00:00:00.000Z",
+        total: items.length,
+        scrollPasses: 1,
+        items
+      },
+      null,
+      2
+    )}\n`
+  );
+  return inventoryPath;
+}
+
+function makeItem(sourceIndex: number, overrides: Partial<InventoryItem> = {}): InventoryItem {
+  return {
+    sourceIndex,
+    title: `Video ${sourceIndex}`,
+    videoUrl: `https://www.youtube.com/watch?v=video-${sourceIndex}`,
+    videoId: `video-${sourceIndex}`,
+    channelName: "Channel",
+    metadataText: null,
+    unavailableKind: "none",
+    ...overrides
+  };
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+describe("computeInventoryFingerprint", () => {
+  it("is stable for the same ordered items", () => {
+    const items = [makeItem(1), makeItem(2), makeItem(3)];
+
+    const left = computeInventoryFingerprint(items);
+    const right = computeInventoryFingerprint(items);
+
+    expect(left).toEqual(right);
+    expect(left.total).toBe(3);
+    expect(left.headIdentifiers).toEqual(["video-1", "video-2", "video-3"]);
+  });
+
+  it("changes when item order changes", () => {
+    const ordered = computeInventoryFingerprint([makeItem(1), makeItem(2)]);
+    const reordered = computeInventoryFingerprint([makeItem(2), makeItem(1)]);
+
+    expect(ordered.orderedHash).not.toBe(reordered.orderedHash);
+  });
+
+  it("falls back to unavailable markers when no stable id exists", () => {
+    const fingerprint = computeInventoryFingerprint([
+      makeItem(1, {
+        title: null,
+        videoUrl: null,
+        videoId: null,
+        unavailableKind: "deleted"
+      })
+    ]);
+
+    expect(fingerprint.headIdentifiers).toEqual(["unavailable:deleted:1"]);
+  });
+});
+
+describe("readSourceSnapshot", () => {
+  it("recomputes a fingerprint when the snapshot file lacks one", () => {
+    const rootDir = makeTempRoot();
+    const inventoryPath = writeInventory(rootDir, "run-a", [makeItem(1), makeItem(2)]);
+
+    const snapshot = readSourceSnapshot(inventoryPath);
+
+    expect(snapshot.runId).toBe("run-a");
+    expect(snapshot.total).toBe(2);
+    expect(snapshot.fingerprint.orderedHash).toBe(computeInventoryFingerprint(snapshot.items).orderedHash);
+  });
+});
+
+describe("assertUsableSourceSnapshot", () => {
+  it("accepts a non-empty snapshot and selection", () => {
+    const snapshot = {
+      runId: "run-a",
+      currentUrl: "",
+      capturedAt: "",
+      total: 1,
+      scrollPasses: 1,
+      fingerprint: computeInventoryFingerprint([makeItem(1)]),
+      items: [makeItem(1)]
+    };
+
+    expect(() => assertUsableSourceSnapshot(snapshot, 1)).not.toThrow();
+  });
+
+  it("throws for an empty snapshot", () => {
+    const snapshot = {
+      runId: "run-empty",
+      currentUrl: "",
+      capturedAt: "",
+      total: 0,
+      scrollPasses: 0,
+      fingerprint: computeInventoryFingerprint([]),
+      items: []
+    };
+
+    expect(() => assertUsableSourceSnapshot(snapshot, 0)).toThrow(/has no items/);
+  });
+});
+
+describe("resolveSourceSnapshotPath", () => {
+  it("returns an explicit source run path when present", () => {
+    const rootDir = makeTempRoot();
+    const inventoryPath = writeInventory(rootDir, "run-explicit", [makeItem(1)]);
+
+    const resolved = resolveSourceSnapshotPath(rootDir, "current-run", "run-explicit");
+
+    expect(resolved).toBe(inventoryPath);
+  });
+
+  it("returns the latest inventory snapshot when no explicit run id is provided", () => {
+    const rootDir = makeTempRoot();
+    const older = writeInventory(rootDir, "run-old", [makeItem(1)]);
+    const newer = writeInventory(rootDir, "run-new", [makeItem(1), makeItem(2)]);
+    fs.utimesSync(older, new Date("2026-03-20T00:00:00.000Z"), new Date("2026-03-20T00:00:00.000Z"));
+    fs.utimesSync(newer, new Date("2026-03-21T00:00:00.000Z"), new Date("2026-03-21T00:00:00.000Z"));
+
+    const resolved = resolveSourceSnapshotPath(rootDir, "current-run");
+
+    expect(resolved).toBe(newer);
+  });
+
+  it("ignores the current run when choosing the latest fallback snapshot", () => {
+    const rootDir = makeTempRoot();
+    const older = writeInventory(rootDir, "run-old", [makeItem(1)]);
+    const current = writeInventory(rootDir, "run-current", [makeItem(1), makeItem(2)]);
+    fs.utimesSync(older, new Date("2026-03-21T00:00:00.000Z"), new Date("2026-03-21T00:00:00.000Z"));
+    fs.utimesSync(current, new Date("2026-03-22T00:00:00.000Z"), new Date("2026-03-22T00:00:00.000Z"));
+
+    const resolved = resolveSourceSnapshotPath(rootDir, "run-current");
+
+    expect(resolved).toBe(older);
+  });
+
+  it("throws when the explicit source run does not exist", () => {
+    const rootDir = makeTempRoot();
+
+    expect(() => resolveSourceSnapshotPath(rootDir, "current-run", "missing-run")).toThrow(/Source snapshot not found/);
+  });
+});
