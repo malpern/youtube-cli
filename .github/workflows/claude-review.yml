@@ -1,0 +1,43 @@
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  claude-review:
+    if: github.event.pull_request.draft == false && env.ANTHROPIC_API_KEY != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Review pull request with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          prompt: |
+            You are reviewing a pull request for a safety-first YouTube playlist migration CLI.
+
+            Review priorities, in order:
+            1. Behavioral regressions and correctness bugs
+            2. Safety issues around destructive actions, auth/session handling, retries, or resume behavior
+            3. Verification gaps, checkpointing gaps, and logging/audit gaps
+            4. Missing or weak tests for risky changes
+
+            Keep the review focused on concrete, actionable findings.
+            Prefer high-signal inline comments on specific problems.
+            Do not suggest broad refactors unless they directly block correctness or safety.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
