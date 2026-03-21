@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 export interface VerificationReport {
+  reportVersion: number;
+  reportComplete: boolean;
+  capturedAt?: string;
   sourceSnapshotRunId: string;
   sourceSnapshotPath: string;
   targetPlaylist: string;
@@ -25,10 +28,33 @@ export interface VerificationReport {
       actualOccurrenceKey: string | null;
     }>;
   };
+  productionDeleteAuthorization: {
+    authorized: boolean;
+    reasons: string[];
+    verificationRunId: string;
+    sourceSnapshotRunId: string | null;
+    targetPlaylist: string;
+    verificationMode: "full" | "subset";
+    verifiedAt: string;
+  };
 }
 
 export function readVerificationReport(reportPath: string): VerificationReport {
-  return JSON.parse(fs.readFileSync(reportPath, "utf8")) as VerificationReport;
+  const parsed = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Partial<VerificationReport>;
+
+  if (parsed.reportVersion !== 1) {
+    throw new Error(`Verification report at ${reportPath} is unsupported or incomplete. Re-run verify with the current CLI.`);
+  }
+
+  if (parsed.reportComplete !== true) {
+    throw new Error(`Verification report at ${reportPath} is incomplete. Re-run verify with the current CLI.`);
+  }
+
+  if (!parsed.productionDeleteAuthorization) {
+    throw new Error(`Verification report at ${reportPath} is missing production delete authorization. Re-run verify with the current CLI.`);
+  }
+
+  return parsed as VerificationReport;
 }
 
 export function resolveVerificationReportPath(rootDir: string, currentRunId: string, verificationRunId?: string): string {

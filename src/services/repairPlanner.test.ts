@@ -19,6 +19,8 @@ function makeItem(sourceIndex: number, overrides: Partial<InventoryItem> = {}): 
 
 function makeReport(overrides: Partial<VerificationReport> = {}): VerificationReport {
   return {
+    reportVersion: 1,
+    reportComplete: true,
     sourceSnapshotRunId: "snapshot-a",
     sourceSnapshotPath: "/tmp/inventory.json",
     targetPlaylist: "Old Watch",
@@ -27,6 +29,15 @@ function makeReport(overrides: Partial<VerificationReport> = {}): VerificationRe
     driftPassed: true,
     ambiguousSourceCount: 0,
     targetMismatches: [],
+    productionDeleteAuthorization: {
+      authorized: false,
+      reasons: ["verification-did-not-pass"],
+      verificationRunId: "verify-a",
+      sourceSnapshotRunId: "snapshot-a",
+      targetPlaylist: "Old Watch",
+      verificationMode: "subset",
+      verifiedAt: "2026-03-21T00:00:00.000Z"
+    },
     targetDiscrepancySummary: {
       missingOccurrenceKeys: [],
       extraOccurrenceKeys: [],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { InventoryItem } from "../models/types.js";
-import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts } from "./verification.js";
+import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts, findMatchingWindowStart } from "./verification.js";
 
 function makeItem(sourceIndex: number, overrides: Partial<InventoryItem> = {}): InventoryItem {
   return {
@@ -129,6 +129,32 @@ describe("evaluateVerificationCounts", () => {
       targetCountMatches: false,
       driftCountMatches: false
     });
+  });
+});
+
+describe("findMatchingWindowStart", () => {
+  it("finds the start index of an ordered contiguous matching subsequence", () => {
+    const source = [makeItem(3), makeItem(4)];
+    const target = [makeItem(1), makeItem(2), makeItem(3), makeItem(4), makeItem(5)];
+
+    expect(findMatchingWindowStart(source, target)).toBe(2);
+  });
+
+  it("returns null when the ordered subsequence is not present contiguously", () => {
+    const source = [makeItem(2), makeItem(3)];
+    const target = [makeItem(1), makeItem(2), makeItem(4), makeItem(3)];
+
+    expect(findMatchingWindowStart(source, target)).toBeNull();
+  });
+
+  it("matches by normalized title when ids are unavailable", () => {
+    const source = [makeItem(1, { videoId: null, videoUrl: null, title: "Same Title" })];
+    const target = [
+      makeItem(2, { videoId: null, videoUrl: null, title: "different" }),
+      makeItem(3, { videoId: null, videoUrl: null, title: " same   title " })
+    ];
+
+    expect(findMatchingWindowStart(source, target)).toBe(1);
   });
 });
 

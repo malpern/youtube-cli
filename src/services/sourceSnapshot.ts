@@ -36,8 +36,15 @@ export function readSourceSnapshot(snapshotPath: string): SourceSnapshot {
     runId,
     currentUrl: parsed.currentUrl ?? "",
     capturedAt: parsed.capturedAt ?? "",
+    metadataVersion: typeof parsed.metadataVersion === "number" ? parsed.metadataVersion : null,
+    metadataComplete:
+      typeof parsed.metadataVersion === "number" &&
+      typeof parsed.bounded === "boolean" &&
+      (typeof parsed.requestedMaxItems === "number" || parsed.requestedMaxItems === null),
     total: parsed.total ?? items.length,
     scrollPasses: parsed.scrollPasses ?? 0,
+    requestedMaxItems: typeof parsed.requestedMaxItems === "number" ? parsed.requestedMaxItems : null,
+    bounded: typeof parsed.bounded === "boolean" ? parsed.bounded : false,
     fingerprint: parsed.fingerprint ?? computeInventoryFingerprint(items),
     items
   };

@@ -8,12 +8,15 @@ interface CopyOperationRecord {
   sourceIndex: number;
   result: string;
   timestamp: string;
+  timings?: Record<string, number>;
 }
 
 interface CopyPerformanceRunAnalysis {
   report: CopyPerformanceRunReport;
   itemLatencies: number[];
   itemLatenciesByResult: Record<string, number[]>;
+  timingSeriesByStep: Record<string, number[]>;
+  timingSeriesByResult: Record<string, Record<string, number[]>>;
 }
 
 function readJsonLines<T>(filePath: string): T[] {
@@ -148,36 +151,67 @@ function analyzeCopyPerformanceRunInternal(rootDir: string, runId: string): Copy
     groups[operation.result] = group;
     return groups;
   }, {});
+  const timingSeriesByStep = operations.reduce<Record<string, number[]>>((groups, operation) => {
+    for (const [step, value] of Object.entries(operation.timings ?? {})) {
+      const group = groups[step] ?? [];
+      group.push(value);
+      groups[step] = group;
+    }
+
+    return groups;
+  }, {});
+  const timingSeriesByResult = operations.reduce<Record<string, Record<string, number[]>>>((groups, operation) => {
+    const resultGroup = groups[operation.result] ?? {};
+    for (const [step, value] of Object.entries(operation.timings ?? {})) {
+      const stepGroup = resultGroup[step] ?? [];
+      stepGroup.push(value);
+      resultGroup[step] = stepGroup;
+    }
+    groups[operation.result] = resultGroup;
+    return groups;
+  }, {});
 
   return {
     itemLatencies,
     itemLatenciesByResult,
+    timingSeriesByStep,
+    timingSeriesByResult,
     report: {
-    runId,
-    startedAt,
-    completedAt,
-    itemCount: operations.length,
-    resultCounts,
-    totalDurationMs:
-      startedAtMs !== null && completedAtMs !== null
-        ? round(completedAtMs - startedAtMs)
-        : null,
-    startupLatencyMs:
-      startedAtMs !== null && firstItemTimestampMs !== null
-        ? round(firstItemTimestampMs - startedAtMs)
-        : null,
-    completionOverheadMs:
-      completedAtMs !== null && lastItemTimestampMs !== null
-        ? round(completedAtMs - lastItemTimestampMs)
-        : null,
-    overallRateItemsPerSecond:
-      startedAtMs !== null && completedAtMs !== null && completedAtMs > startedAtMs
-        ? round(operations.length / ((completedAtMs - startedAtMs) / 1000))
-        : null,
-    itemLatencyMs: computeNumericStats(itemLatencies),
-    itemLatencyByResult: Object.fromEntries(
-      Object.entries(itemLatenciesByResult).map(([result, latencies]) => [result, computeNumericStats(latencies)])
-    )
+      runId,
+      startedAt,
+      completedAt,
+      itemCount: operations.length,
+      timingSampleCount: operations.filter((operation) => operation.timings && Object.keys(operation.timings).length > 0).length,
+      resultCounts,
+      totalDurationMs:
+        startedAtMs !== null && completedAtMs !== null
+          ? round(completedAtMs - startedAtMs)
+          : null,
+      startupLatencyMs:
+        startedAtMs !== null && firstItemTimestampMs !== null
+          ? round(firstItemTimestampMs - startedAtMs)
+          : null,
+      completionOverheadMs:
+        completedAtMs !== null && lastItemTimestampMs !== null
+          ? round(completedAtMs - lastItemTimestampMs)
+          : null,
+      overallRateItemsPerSecond:
+        startedAtMs !== null && completedAtMs !== null && completedAtMs > startedAtMs
+          ? round(operations.length / ((completedAtMs - startedAtMs) / 1000))
+          : null,
+      itemLatencyMs: computeNumericStats(itemLatencies),
+      itemLatencyByResult: Object.fromEntries(
+        Object.entries(itemLatenciesByResult).map(([result, latencies]) => [result, computeNumericStats(latencies)])
+      ),
+      timingBreakdownByStep: Object.fromEntries(
+        Object.entries(timingSeriesByStep).map(([step, values]) => [step, computeNumericStats(values)])
+      ),
+      timingBreakdownByResult: Object.fromEntries(
+        Object.entries(timingSeriesByResult).map(([result, steps]) => [
+          result,
+          Object.fromEntries(Object.entries(steps).map(([step, values]) => [step, computeNumericStats(values)]))
+        ])
+      )
     }
   };
 }
@@ -197,6 +231,24 @@ export function analyzeCopyPerformanceRuns(rootDir: string, runIds: string[]): C
 
     return groups;
   }, {});
+  const aggregateTimingSeriesByStep = analyses.reduce<Record<string, number[]>>((groups, analysis) => {
+    for (const [step, values] of Object.entries(analysis.timingSeriesByStep)) {
+      groups[step] = [...(groups[step] ?? []), ...values];
+    }
+
+    return groups;
+  }, {});
+  const aggregateTimingSeriesByResult = analyses.reduce<Record<string, Record<string, number[]>>>((groups, analysis) => {
+    for (const [result, steps] of Object.entries(analysis.timingSeriesByResult)) {
+      const resultGroup = groups[result] ?? {};
+      for (const [step, values] of Object.entries(steps)) {
+        resultGroup[step] = [...(resultGroup[step] ?? []), ...values];
+      }
+      groups[result] = resultGroup;
+    }
+
+    return groups;
+  }, {});
 
   return {
     generatedAt: isoNow(),
@@ -210,6 +262,15 @@ export function analyzeCopyPerformanceRuns(rootDir: string, runIds: string[]): C
       itemLatencyMs: computeNumericStats(aggregateItemLatencies),
       itemLatencyByResult: Object.fromEntries(
         Object.entries(aggregateItemLatenciesByResult).map(([result, values]) => [result, computeNumericStats(values)])
+      ),
+      timingBreakdownByStep: Object.fromEntries(
+        Object.entries(aggregateTimingSeriesByStep).map(([step, values]) => [step, computeNumericStats(values)])
+      ),
+      timingBreakdownByResult: Object.fromEntries(
+        Object.entries(aggregateTimingSeriesByResult).map(([result, steps]) => [
+          result,
+          Object.fromEntries(Object.entries(steps).map(([step, values]) => [step, computeNumericStats(values)]))
+        ])
       )
     }
   };

@@ -6,10 +6,16 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { ensureVideoSavedToPlaylist } from "../browser/youtube/saveToPlaylist.js";
+import type { SaveToPlaylistTimings } from "../browser/youtube/saveToPlaylist.js";
 import type { InventoryItem } from "../models/types.js";
+import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
+import { pauseRunForAuthentication } from "../services/authPause.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
+import { computeMutationPacingDelay, resolveMutationPacingPolicy } from "../services/mutationPacing.js";
+import { resolveMutationRetryPolicy, runWithRetries } from "../services/mutationRetry.js";
 import { planCopyResume } from "../services/resumePlanner.js";
 import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourceSnapshot.js";
+import { selectSourceItems } from "../services/sourceSelection.js";
 import { assessSourceItemPolicy, partitionSourceItems } from "../services/sourceItemPolicy.js";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -43,7 +49,10 @@ function appendCopyOperation(
     videoId: string | null;
     videoUrl: string | null;
     result: string;
+    attempts: number;
+    timings?: SaveToPlaylistTimings;
     error?: string;
+    screenshotPath?: string;
     timestamp: string;
   }
 ): void {
@@ -57,17 +66,29 @@ export async function runCopy(command: Command): Promise<void> {
     targetPlaylist?: string;
     milestoneEvery?: string;
     sourceRunId?: string;
+    startIndex?: string;
     resume?: boolean;
+    maxAttempts?: string;
+    retryInitialDelayMs?: string;
+    retryMaxDelayMs?: string;
+    jitterMinMs?: string;
+    jitterMaxMs?: string;
+    cooldownEvery?: string;
+    cooldownMs?: string;
   }>();
   const targetPlaylist = getTargetPlaylist(command);
   const milestoneEvery = parsePositiveInt(localOptions.milestoneEvery, 5);
+  const retryPolicy = resolveMutationRetryPolicy(localOptions);
+  const pacingPolicy = resolveMutationPacingPolicy(localOptions);
   const operationsPath = path.join(ctx.artifacts.runDir, "copy-operations.jsonl");
   const startedAtMs = Date.now();
   const snapshotPath = resolveSourceSnapshotPath(ctx.rootDir, ctx.runId, localOptions.sourceRunId);
   const sourceSnapshot = readSourceSnapshot(snapshotPath);
-  const sourceItems = localOptions.maxItems
-    ? sourceSnapshot.items.slice(0, parsePositiveInt(localOptions.maxItems, 0))
-    : sourceSnapshot.items;
+  const startIndex = localOptions.startIndex ? parsePositiveInt(localOptions.startIndex, 1) : 1;
+  const sourceItems = selectSourceItems(sourceSnapshot.items, {
+    startIndex,
+    ...(localOptions.maxItems ? { maxItems: parsePositiveInt(localOptions.maxItems, 0) } : {})
+  });
   assertUsableSourceSnapshot(sourceSnapshot, sourceItems.length);
   const resumePlan = localOptions.resume
     ? planCopyResume({
@@ -79,8 +100,13 @@ export async function runCopy(command: Command): Promise<void> {
     : {
         resumed: false,
         processedCount: 0,
+        lastProcessedSourceIndex: 0,
         remainingItems: sourceItems,
         savedCount: 0,
+        alreadySavedCount: 0,
+        expectedNonCopyableCount: 0,
+        ambiguousBlockedCount: 0,
+        retryExhaustedCount: 0,
         skippedCount: 0,
         failedCount: 0
       };
@@ -90,12 +116,15 @@ export async function runCopy(command: Command): Promise<void> {
   try {
     ctx.logEvent("copy", "info", "copy.source-snapshot", "Loaded source snapshot", {
       sourceSnapshotRunId: sourceSnapshot.runId,
-      sourceSnapshotPath: snapshotPath,
-      sourceTotal: sourceSnapshot.total,
-      selectedCount: sourceItems.length,
+        sourceSnapshotPath: snapshotPath,
+        startIndex,
+        sourceTotal: sourceSnapshot.total,
+        selectedCount: sourceItems.length,
       sourceFingerprint: sourceSnapshot.fingerprint,
       resumed: resumePlan.resumed,
-      resumeProcessedCount: resumePlan.processedCount
+      resumeProcessedCount: resumePlan.processedCount,
+      retryPolicy,
+      pacingPolicy
     });
     const partitionedSource = partitionSourceItems(sourceItems);
     ctx.logEvent("copy", "info", "copy.source-policy", "Assessed source item copy policy", {
@@ -105,33 +134,87 @@ export async function runCopy(command: Command): Promise<void> {
       sourceSnapshotRunId: sourceSnapshot.runId
     });
     let savedCount = resumePlan.savedCount;
+    let alreadySavedCount = resumePlan.alreadySavedCount;
+    let expectedNonCopyableCount = resumePlan.expectedNonCopyableCount;
+    let ambiguousBlockedCount = resumePlan.ambiguousBlockedCount;
+    let retryExhaustedCount = resumePlan.retryExhaustedCount;
     let skippedCount = resumePlan.skippedCount;
     let failedCount = resumePlan.failedCount;
 
+    await assertAuthenticatedYouTubeSession(session.page, ctx.config, "copy.start", { navigate: true });
+
     for (const [index, item] of resumePlan.remainingItems.entries()) {
-      await processCopyItem({
-        ctx,
-        item,
-        page: session.page,
-        targetPlaylist,
-        operationsPath,
-        onSaved: () => {
-          savedCount += 1;
-        },
-        onSkipped: () => {
-          skippedCount += 1;
-        },
-        onFailed: () => {
-          failedCount += 1;
+      try {
+        await processCopyItem({
+          ctx,
+          item,
+          page: session.page,
+          targetPlaylist,
+          operationsPath,
+          retryPolicy,
+          onSaved: () => {
+            savedCount += 1;
+          },
+          onAlreadySaved: () => {
+            alreadySavedCount += 1;
+            skippedCount += 1;
+          },
+          onExpectedNonCopyable: () => {
+            expectedNonCopyableCount += 1;
+            skippedCount += 1;
+          },
+          onAmbiguousBlocked: () => {
+            ambiguousBlockedCount += 1;
+            failedCount += 1;
+          },
+          onRetryExhausted: () => {
+            retryExhaustedCount += 1;
+            failedCount += 1;
+          }
+        });
+      } catch (error) {
+        if (error instanceof AuthenticationRequiredError) {
+          const completedCount = resumePlan.processedCount + index;
+          pauseRunForAuthentication({
+            ctx,
+            phase: "copy",
+            error,
+            payload: {
+              targetPlaylist,
+              sourceSnapshotRunId: sourceSnapshot.runId,
+              sourceSnapshotPath: snapshotPath,
+              startIndex,
+              processed: completedCount,
+              processedCount: completedCount,
+              lastProcessedSourceIndex: completedCount > 0 ? sourceItems[completedCount - 1]?.sourceIndex ?? 0 : 0,
+              total: sourceItems.length,
+              savedCount,
+              alreadySavedCount,
+              expectedNonCopyableCount,
+              ambiguousBlockedCount,
+              retryExhaustedCount,
+              skippedCount,
+              failedCount
+            }
+          });
+          return;
         }
-      });
+
+        throw error;
+      }
 
       const processedCount = resumePlan.processedCount + index + 1;
       if (processedCount % milestoneEvery === 0 || processedCount === sourceItems.length) {
         ctx.logEvent("copy", "info", "copy.progress", "Copy progress milestone", {
           processed: processedCount,
+          processedCount,
+          lastProcessedSourceIndex: item.sourceIndex,
           total: sourceItems.length,
           savedCount,
+          alreadySavedCount,
+          expectedNonCopyableCount,
+          ambiguousBlockedCount,
+          retryExhaustedCount,
           skippedCount,
           failedCount,
           rateItemsPerSecond: formatRate(processedCount, startedAtMs),
@@ -143,27 +226,77 @@ export async function runCopy(command: Command): Promise<void> {
       ctx.saveCheckpoint("copy", {
         targetPlaylist,
         sourceSnapshotRunId: sourceSnapshot.runId,
+        startIndex,
         sourceSnapshotPath: snapshotPath,
-        processed: item.sourceIndex,
+        processed: processedCount,
+        processedCount,
+        lastProcessedSourceIndex: item.sourceIndex,
         total: sourceItems.length,
         savedCount,
+        alreadySavedCount,
+        expectedNonCopyableCount,
+        ambiguousBlockedCount,
+        retryExhaustedCount,
         skippedCount,
         failedCount
       });
+
+      const pacingDelay = computeMutationPacingDelay(pacingPolicy, processedCount);
+      if (pacingDelay.totalDelayMs > 0 && processedCount < sourceItems.length) {
+        ctx.logEvent("copy", "info", "copy.pacing", "Sleeping between copy items to throttle the mutation rate", {
+          processedCount,
+          jitterMs: pacingDelay.jitterMs,
+          cooldownMs: pacingDelay.cooldownMs,
+          totalDelayMs: pacingDelay.totalDelayMs,
+          targetPlaylist
+        });
+        await session.page.waitForTimeout(pacingDelay.totalDelayMs);
+      }
     }
 
     ctx.logEvent("copy", "info", "copy.complete", "Copy pass completed", {
       targetPlaylist,
       total: sourceItems.length,
       savedCount,
+      alreadySavedCount,
+      expectedNonCopyableCount,
+      ambiguousBlockedCount,
+      retryExhaustedCount,
       skippedCount,
       failedCount,
       operationsPath,
       sourceSnapshotRunId: sourceSnapshot.runId,
+      startIndex,
       sourceSnapshotPath: snapshotPath
     });
     ctx.db.upsertRunState("copy", "complete");
   } catch (error) {
+    if (error instanceof AuthenticationRequiredError) {
+      pauseRunForAuthentication({
+        ctx,
+        phase: "copy",
+        error,
+        payload: {
+          targetPlaylist,
+          sourceSnapshotRunId: sourceSnapshot.runId,
+          sourceSnapshotPath: snapshotPath,
+          startIndex,
+          processed: resumePlan.processedCount,
+          processedCount: resumePlan.processedCount,
+          lastProcessedSourceIndex: resumePlan.lastProcessedSourceIndex,
+          total: sourceItems.length,
+          savedCount: resumePlan.savedCount,
+          alreadySavedCount: resumePlan.alreadySavedCount,
+          expectedNonCopyableCount: resumePlan.expectedNonCopyableCount,
+          ambiguousBlockedCount: resumePlan.ambiguousBlockedCount,
+          retryExhaustedCount: resumePlan.retryExhaustedCount,
+          skippedCount: resumePlan.skippedCount,
+          failedCount: resumePlan.failedCount
+        }
+      });
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     ctx.logEvent("copy", "error", "copy.failed", "Copy pass failed", { error: message, targetPlaylist });
     ctx.db.upsertRunState("copy", "failed");
@@ -179,11 +312,14 @@ async function processCopyItem(args: {
   page: import("playwright").Page;
   targetPlaylist: string;
   operationsPath: string;
+  retryPolicy: ReturnType<typeof resolveMutationRetryPolicy>;
   onSaved: () => void;
-  onSkipped: () => void;
-  onFailed: () => void;
+  onAlreadySaved: () => void;
+  onExpectedNonCopyable: () => void;
+  onAmbiguousBlocked: () => void;
+  onRetryExhausted: () => void;
 }): Promise<void> {
-  const { ctx, item, page, targetPlaylist, operationsPath, onSaved, onSkipped, onFailed } = args;
+  const { ctx, item, page, targetPlaylist, operationsPath, onSaved } = args;
 
   const policy = assessSourceItemPolicy(item);
   if (policy.policy === "expected-non-copyable") {
@@ -193,6 +329,7 @@ async function processCopyItem(args: {
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "expected-non-copyable",
+      attempts: 1,
       error: policy.reason,
       timestamp: new Date().toISOString()
     });
@@ -202,7 +339,7 @@ async function processCopyItem(args: {
       reason: policy.reason,
       targetPlaylist
     });
-    onSkipped();
+    args.onExpectedNonCopyable();
     return;
   }
 
@@ -213,6 +350,7 @@ async function processCopyItem(args: {
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "ambiguous-source-item",
+      attempts: 1,
       error: policy.reason,
       timestamp: new Date().toISOString()
     });
@@ -222,7 +360,7 @@ async function processCopyItem(args: {
       reason: policy.reason,
       targetPlaylist
     });
-    onFailed();
+    args.onAmbiguousBlocked();
     return;
   }
 
@@ -232,27 +370,61 @@ async function processCopyItem(args: {
       throw new Error(`Copyable source item '${item.sourceIndex}' is missing a videoUrl`);
     }
 
-    const result = await ensureVideoSavedToPlaylist(page, videoUrl, targetPlaylist);
+    const { result: response, attempts } = await runWithRetries({
+      policy: args.retryPolicy,
+      run: async () => {
+        await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.before`);
+        try {
+          const response = await ensureVideoSavedToPlaylist(page, videoUrl, targetPlaylist, async () => {
+            await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.open-save-panel`);
+          });
+          await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.after`);
+          return response;
+              } catch (error) {
+                await throwIfAuthenticationLost(page, ctx.config, `copy.item.${item.sourceIndex}.failure`, error);
+                throw new Error("Authentication guard should have thrown before continuing");
+              }
+            },
+      onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
+        ctx.logEvent("copy", "warn", "copy.item-retry", "Retrying copy item after failure", {
+          sourceIndex: item.sourceIndex,
+          title: item.title,
+          attempt,
+          nextAttempt,
+          delayMs,
+          error: error.message,
+          targetPlaylist
+        });
+      },
+      sleep: async (delayMs) => {
+        await page.waitForTimeout(delayMs);
+      },
+      shouldRetry: (error) => !(error instanceof AuthenticationRequiredError)
+    });
     appendCopyOperation(operationsPath, {
       sourceIndex: item.sourceIndex,
       title: item.title,
       videoId: item.videoId,
       videoUrl,
-      result,
+      result: response.result,
+      attempts,
+      timings: response.timings,
       timestamp: new Date().toISOString()
     });
 
     ctx.logEvent("copy", "info", "copy.item", "Processed copy item", {
       sourceIndex: item.sourceIndex,
       title: item.title,
-      result,
+      result: response.result,
+      attempts,
+      timings: response.timings,
       targetPlaylist
     });
 
-    if (result === "saved") {
+    if (response.result === "saved") {
       onSaved();
     } else {
-      onSkipped();
+      args.onAlreadySaved();
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -264,6 +436,7 @@ async function processCopyItem(args: {
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "failed",
+      attempts: args.retryPolicy.maxAttempts,
       error: message,
       ...(fs.existsSync(screenshotPath) ? { screenshotPath } : {}),
       timestamp: new Date().toISOString()
@@ -272,9 +445,10 @@ async function processCopyItem(args: {
       sourceIndex: item.sourceIndex,
       title: item.title,
       error: message,
+      attempts: args.retryPolicy.maxAttempts,
       ...(fs.existsSync(screenshotPath) ? { screenshotPath } : {}),
       targetPlaylist
     });
-    onFailed();
+    args.onRetryExhausted();
   }
 }

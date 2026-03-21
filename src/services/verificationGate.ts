@@ -1,10 +1,13 @@
-import type { DeletionEligibilityDecision } from "../models/types.js";
+import type { DeletionEligibilityDecision, ProductionDeleteAuthorization } from "../models/types.js";
 
 export interface VerificationGateInput {
   passed: boolean;
   targetPassed: boolean;
   driftPassed: boolean;
   subsetLimit: number | null;
+  sourceSnapshotMetadataComplete: boolean;
+  sourceSnapshotBounded: boolean;
+  expectedNonCopyableCount: number;
   ambiguousSourceCount: number;
   targetCountMatches: boolean;
   driftCountMatches: boolean;
@@ -24,6 +27,14 @@ export function evaluateDeletionEligibility(input: VerificationGateInput): Delet
     reasons.push("verification-was-subset-only");
   }
 
+  if (!input.sourceSnapshotMetadataComplete) {
+    reasons.push("source-snapshot-metadata-incomplete");
+  }
+
+  if (input.sourceSnapshotBounded) {
+    reasons.push("source-snapshot-was-bounded");
+  }
+
   if (!input.passed) {
     reasons.push("verification-did-not-pass");
   }
@@ -38,6 +49,10 @@ export function evaluateDeletionEligibility(input: VerificationGateInput): Delet
 
   if (input.ambiguousSourceCount > 0) {
     reasons.push("ambiguous-source-items-present");
+  }
+
+  if (input.expectedNonCopyableCount > 0) {
+    reasons.push("expected-non-copyable-source-items-present");
   }
 
   if (!input.targetCountMatches) {
@@ -59,5 +74,27 @@ export function evaluateDeletionEligibility(input: VerificationGateInput): Delet
   return {
     eligible: reasons.length === 0,
     reasons
+  };
+}
+
+export function buildProductionDeleteAuthorization(args: {
+  verificationRunId: string;
+  sourceSnapshotRunId: string | null;
+  targetPlaylist: string;
+  subsetLimit: number | null;
+  sourceSnapshotMetadataComplete: boolean;
+  sourceSnapshotBounded: boolean;
+  eligibility: DeletionEligibilityDecision;
+  verifiedAt?: string;
+}): ProductionDeleteAuthorization {
+  return {
+    authorized: args.eligibility.eligible,
+    reasons: args.eligibility.reasons,
+    verificationRunId: args.verificationRunId,
+    sourceSnapshotRunId: args.sourceSnapshotRunId,
+    targetPlaylist: args.targetPlaylist,
+    verificationMode:
+      args.subsetLimit === null && args.sourceSnapshotMetadataComplete && !args.sourceSnapshotBounded ? "full" : "subset",
+    verifiedAt: args.verifiedAt ?? new Date().toISOString()
   };
 }

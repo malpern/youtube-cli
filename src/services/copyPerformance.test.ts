@@ -15,7 +15,15 @@ function makeTempRoot(): string {
   return rootDir;
 }
 
-function writeRun(rootDir: string, runId: string, args: { startedAt: string; completedAt: string; items: Array<{ result: string; createdAt: string }> }): void {
+function writeRun(
+  rootDir: string,
+  runId: string,
+  args: {
+    startedAt: string;
+    completedAt: string;
+    items: Array<{ result: string; createdAt: string; timings?: Record<string, number> }>;
+  }
+): void {
   const runDir = path.join(rootDir, "runs", runId);
   fs.mkdirSync(runDir, { recursive: true });
   const events = [
@@ -51,7 +59,8 @@ function writeRun(rootDir: string, runId: string, args: { startedAt: string; com
   const operations = args.items.map((item, index) => ({
     sourceIndex: index + 1,
     result: item.result,
-    timestamp: item.createdAt
+    timestamp: item.createdAt,
+    ...(item.timings ? { timings: item.timings } : {})
   }));
 
   fs.writeFileSync(path.join(runDir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
@@ -100,8 +109,8 @@ describe("analyzeCopyPerformanceRun", () => {
       startedAt: "2026-03-21T15:00:00.000Z",
       completedAt: "2026-03-21T15:00:12.000Z",
       items: [
-        { result: "already-saved", createdAt: "2026-03-21T15:00:03.000Z" },
-        { result: "saved", createdAt: "2026-03-21T15:00:08.000Z" }
+        { result: "already-saved", createdAt: "2026-03-21T15:00:03.000Z", timings: { gotoMs: 1000, totalMs: 3000 } },
+        { result: "saved", createdAt: "2026-03-21T15:00:08.000Z", timings: { gotoMs: 2000, selectionMs: 2500, totalMs: 5000 } }
       ]
     });
 
@@ -110,6 +119,7 @@ describe("analyzeCopyPerformanceRun", () => {
       startedAt: "2026-03-21T15:00:00.000Z",
       completedAt: "2026-03-21T15:00:12.000Z",
       itemCount: 2,
+      timingSampleCount: 2,
       resultCounts: {
         "already-saved": 1,
         saved: 1
@@ -146,6 +156,86 @@ describe("analyzeCopyPerformanceRun", () => {
           p95: 5000,
           stddev: 0
         }
+      },
+      timingBreakdownByStep: {
+        gotoMs: {
+          count: 2,
+          min: 1000,
+          max: 2000,
+          mean: 1500,
+          median: 1500,
+          p95: 1950,
+          stddev: 500
+        },
+        totalMs: {
+          count: 2,
+          min: 3000,
+          max: 5000,
+          mean: 4000,
+          median: 4000,
+          p95: 4900,
+          stddev: 1000
+        },
+        selectionMs: {
+          count: 1,
+          min: 2500,
+          max: 2500,
+          mean: 2500,
+          median: 2500,
+          p95: 2500,
+          stddev: 0
+        }
+      },
+      timingBreakdownByResult: {
+        "already-saved": {
+          gotoMs: {
+            count: 1,
+            min: 1000,
+            max: 1000,
+            mean: 1000,
+            median: 1000,
+            p95: 1000,
+            stddev: 0
+          },
+          totalMs: {
+            count: 1,
+            min: 3000,
+            max: 3000,
+            mean: 3000,
+            median: 3000,
+            p95: 3000,
+            stddev: 0
+          }
+        },
+        saved: {
+          gotoMs: {
+            count: 1,
+            min: 2000,
+            max: 2000,
+            mean: 2000,
+            median: 2000,
+            p95: 2000,
+            stddev: 0
+          },
+          selectionMs: {
+            count: 1,
+            min: 2500,
+            max: 2500,
+            mean: 2500,
+            median: 2500,
+            p95: 2500,
+            stddev: 0
+          },
+          totalMs: {
+            count: 1,
+            min: 5000,
+            max: 5000,
+            mean: 5000,
+            median: 5000,
+            p95: 5000,
+            stddev: 0
+          }
+        }
       }
     });
   });
@@ -158,16 +248,16 @@ describe("analyzeCopyPerformanceRuns", () => {
       startedAt: "2026-03-21T15:00:00.000Z",
       completedAt: "2026-03-21T15:00:12.000Z",
       items: [
-        { result: "already-saved", createdAt: "2026-03-21T15:00:03.000Z" },
-        { result: "saved", createdAt: "2026-03-21T15:00:08.000Z" }
+        { result: "already-saved", createdAt: "2026-03-21T15:00:03.000Z", timings: { gotoMs: 1000, totalMs: 3000 } },
+        { result: "saved", createdAt: "2026-03-21T15:00:08.000Z", timings: { gotoMs: 2000, totalMs: 5000 } }
       ]
     });
     writeRun(rootDir, "run-b", {
       startedAt: "2026-03-21T16:00:00.000Z",
       completedAt: "2026-03-21T16:00:06.000Z",
       items: [
-        { result: "already-saved", createdAt: "2026-03-21T16:00:02.000Z" },
-        { result: "already-saved", createdAt: "2026-03-21T16:00:04.000Z" }
+        { result: "already-saved", createdAt: "2026-03-21T16:00:02.000Z", timings: { gotoMs: 500, totalMs: 2000 } },
+        { result: "already-saved", createdAt: "2026-03-21T16:00:04.000Z", timings: { gotoMs: 500, totalMs: 2000 } }
       ]
     });
 
@@ -194,6 +284,24 @@ describe("analyzeCopyPerformanceRuns", () => {
       median: 5000,
       p95: 5000,
       stddev: 0
+    });
+    expect(report.aggregate.timingBreakdownByStep.gotoMs!).toEqual({
+      count: 4,
+      min: 500,
+      max: 2000,
+      mean: 1000,
+      median: 750,
+      p95: 1850,
+      stddev: 612.37
+    });
+    expect(report.aggregate.timingBreakdownByResult["already-saved"]!.totalMs!).toEqual({
+      count: 3,
+      min: 2000,
+      max: 3000,
+      mean: 2333.33,
+      median: 2000,
+      p95: 2900,
+      stddev: 471.4
     });
   });
 });

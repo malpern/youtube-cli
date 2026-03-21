@@ -9,8 +9,8 @@ import { loadPlaylistInventory, loadWatchLaterInventory, type InventoryOptions }
 import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
 import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, computeInventoryFingerprint } from "../services/sourceSnapshot.js";
 import { ambiguousSourceItemMismatches, partitionSourceItems } from "../services/sourceItemPolicy.js";
-import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts } from "../services/verification.js";
-import { evaluateDeletionEligibility } from "../services/verificationGate.js";
+import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts, findMatchingWindowStart } from "../services/verification.js";
+import { buildProductionDeleteAuthorization, evaluateDeletionEligibility } from "../services/verificationGate.js";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -88,8 +88,7 @@ export async function runVerify(command: Command): Promise<void> {
     }
 
     const targetInventory = await loadPlaylistInventory(session.page, targetPlaylistUrl, {
-      ...inventoryOptions,
-      ...(subsetLimit ? { maxItems: targetSourceItems.length } : {})
+      ...inventoryOptions
     });
 
     const driftInventory = await loadWatchLaterInventory(session.page, watchLaterUrl, {
@@ -97,12 +96,19 @@ export async function runVerify(command: Command): Promise<void> {
       ...(subsetLimit ? { maxItems: subsetLimit } : {})
     });
 
+    const targetWindowStart = subsetLimit ? findMatchingWindowStart(targetSourceItems, targetInventory.items) : 0;
+    const targetWindowItems =
+      subsetLimit && targetWindowStart !== null
+        ? targetInventory.items.slice(targetWindowStart, targetWindowStart + targetSourceItems.length)
+        : subsetLimit
+          ? []
+          : targetInventory.items;
     const targetMismatches = [
       ...ambiguousSourceItemMismatches(partitionedSource.ambiguousItems),
-      ...compareOrderedPrefix(targetSourceItems, targetInventory.items)
+      ...compareOrderedPrefix(targetSourceItems, targetWindowItems)
     ];
     const driftMismatches = compareOrderedPrefix(sourceItems, driftInventory.items);
-    const targetDiscrepancySummary = analyzeInventoryDiscrepancies(targetSourceItems, targetInventory.items);
+    const targetDiscrepancySummary = analyzeInventoryDiscrepancies(targetSourceItems, targetWindowItems);
     const driftDiscrepancySummary = analyzeInventoryDiscrepancies(sourceItems, driftInventory.items);
     const { targetCountMatches, driftCountMatches } = evaluateVerificationCounts({
       subsetLimit,
@@ -110,7 +116,9 @@ export async function runVerify(command: Command): Promise<void> {
       targetCount: targetInventory.items.length,
       driftCount: driftInventory.items.length
     });
-    const targetDiscrepanciesClear = subsetLimit ? true : discrepanciesAreClear(targetDiscrepancySummary);
+    const targetDiscrepanciesClear = subsetLimit
+      ? targetWindowStart !== null && discrepanciesAreClear(targetDiscrepancySummary)
+      : discrepanciesAreClear(targetDiscrepancySummary);
     const driftDiscrepanciesClear = subsetLimit ? true : discrepanciesAreClear(driftDiscrepancySummary);
     const targetPassed =
       targetMismatches.length === 0 &&
@@ -125,6 +133,9 @@ export async function runVerify(command: Command): Promise<void> {
       targetPassed,
       driftPassed,
       subsetLimit: subsetLimit ?? null,
+      sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
+      sourceSnapshotBounded: sourceSnapshot.bounded,
+      expectedNonCopyableCount: partitionedSource.expectedNonCopyableItems.length,
       ambiguousSourceCount: partitionedSource.ambiguousItems.length,
       targetCountMatches,
       driftCountMatches,
@@ -132,8 +143,19 @@ export async function runVerify(command: Command): Promise<void> {
       driftDiscrepanciesClear,
       sourceSnapshotRunId: sourceSnapshot.runId
     });
+    const productionDeleteAuthorization = buildProductionDeleteAuthorization({
+      verificationRunId: ctx.runId,
+      sourceSnapshotRunId: sourceSnapshot.runId,
+      targetPlaylist,
+      subsetLimit: subsetLimit ?? null,
+      sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
+      sourceSnapshotBounded: sourceSnapshot.bounded,
+      eligibility: deletionEligibility
+    });
 
     const report = {
+      reportVersion: 1,
+      reportComplete: true,
       capturedAt: new Date().toISOString(),
       sourcePlaylist: "Watch Later",
       targetPlaylist,
@@ -141,6 +163,10 @@ export async function runVerify(command: Command): Promise<void> {
       sourceSnapshotRunId: sourceSnapshot.runId,
       sourceSnapshotPath: snapshotPath,
       sourceCount: sourceItems.length,
+      sourceSnapshotMetadataVersion: sourceSnapshot.metadataVersion,
+      sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
+      sourceSnapshotBounded: sourceSnapshot.bounded,
+      sourceSnapshotRequestedMaxItems: sourceSnapshot.requestedMaxItems,
       copyableSourceCount: targetSourceItems.length,
       expectedNonCopyableCount: partitionedSource.expectedNonCopyableItems.length,
       ambiguousSourceCount: partitionedSource.ambiguousItems.length,
@@ -156,9 +182,12 @@ export async function runVerify(command: Command): Promise<void> {
       driftCountMatches,
       targetDiscrepanciesClear,
       driftDiscrepanciesClear,
-      deletionEligibility,
+      verificationMode: subsetLimit || sourceSnapshot.bounded || !sourceSnapshot.metadataComplete ? "subset" : "full",
+      productionDeleteAuthorization,
       targetDiscrepancySummary,
       driftDiscrepancySummary,
+      targetWindowStart,
+      targetWindowMatched: targetWindowStart !== null,
       targetMismatches,
       driftMismatches,
       sourceItems,
@@ -176,6 +205,10 @@ export async function runVerify(command: Command): Promise<void> {
       sourceSnapshotRunId: sourceSnapshot.runId,
       sourceSnapshotPath: snapshotPath,
       sourceCount: sourceItems.length,
+      sourceSnapshotMetadataVersion: sourceSnapshot.metadataVersion,
+      sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
+      sourceSnapshotBounded: sourceSnapshot.bounded,
+      sourceSnapshotRequestedMaxItems: sourceSnapshot.requestedMaxItems,
       copyableSourceCount: targetSourceItems.length,
       expectedNonCopyableCount: partitionedSource.expectedNonCopyableItems.length,
       ambiguousSourceCount: partitionedSource.ambiguousItems.length,
@@ -185,12 +218,16 @@ export async function runVerify(command: Command): Promise<void> {
       driftMismatchCount: driftMismatches.length,
       targetOrderMismatchCount: targetDiscrepancySummary.orderMismatchCount,
       driftOrderMismatchCount: driftDiscrepancySummary.orderMismatchCount,
+      targetWindowStart,
+      targetWindowMatched: targetWindowStart !== null,
       targetCountMatches,
       driftCountMatches,
       targetDiscrepanciesClear,
       driftDiscrepanciesClear,
+      verificationMode: subsetLimit || sourceSnapshot.bounded || !sourceSnapshot.metadataComplete ? "subset" : "full",
       deletionEligible: deletionEligibility.eligible,
       deletionBlockedBy: deletionEligibility.reasons,
+      productionDeleteAuthorized: productionDeleteAuthorization.authorized,
       targetPlaylist,
       targetPlaylistUrl
     });
@@ -202,6 +239,10 @@ export async function runVerify(command: Command): Promise<void> {
       driftPassed,
       sourceSnapshotRunId: sourceSnapshot.runId,
       sourceCount: sourceItems.length,
+      sourceSnapshotMetadataVersion: sourceSnapshot.metadataVersion,
+      sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
+      sourceSnapshotBounded: sourceSnapshot.bounded,
+      sourceSnapshotRequestedMaxItems: sourceSnapshot.requestedMaxItems,
       copyableSourceCount: targetSourceItems.length,
       expectedNonCopyableCount: partitionedSource.expectedNonCopyableItems.length,
       ambiguousSourceCount: partitionedSource.ambiguousItems.length,
@@ -211,12 +252,16 @@ export async function runVerify(command: Command): Promise<void> {
       driftMismatchCount: driftMismatches.length,
       targetOrderMismatchCount: targetDiscrepancySummary.orderMismatchCount,
       driftOrderMismatchCount: driftDiscrepancySummary.orderMismatchCount,
+      targetWindowStart,
+      targetWindowMatched: targetWindowStart !== null,
       targetCountMatches,
       driftCountMatches,
       targetDiscrepanciesClear,
       driftDiscrepanciesClear,
+      verificationMode: subsetLimit || sourceSnapshot.bounded || !sourceSnapshot.metadataComplete ? "subset" : "full",
       deletionEligible: deletionEligibility.eligible,
       deletionBlockedBy: deletionEligibility.reasons,
+      productionDeleteAuthorized: productionDeleteAuthorization.authorized,
       targetPlaylist,
       targetPlaylistUrl
     });

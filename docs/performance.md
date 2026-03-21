@@ -11,9 +11,19 @@ npx tsx src/cli.ts copy-performance \
   --copy-run-id <copy-run-id-1> <copy-run-id-2> ...
 ```
 
+Newer copy runs may also include per-step save timings in the same report:
+
+- `timingSampleCount`
+- `timingBreakdownByStep`
+- `timingBreakdownByResult`
+
+Older runs remain valid inputs, but those fields will be empty when the source `copy-operations.jsonl` did not record step timings yet.
+
 Latest aggregate report:
 
 - [copy-performance.json](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-03-23-713Z-ddrmnl/copy-performance.json)
+- backward-compatible re-analysis of the speed-pass runs:
+  - [copy-performance.json](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T19-23-08-790Z-sgbk6o/copy-performance.json)
 
 ## Latest measured runs
 
@@ -139,3 +149,4 @@ Comparison to the 25-item mixed run:
 - The no-op path is much cheaper at about `5s` per item, which is useful for resume and repair.
 - The measured no-op variability is acceptable.
 - The `saved` path appears broadly stable through `50` items, but the outlier tail has widened enough that future deletion and full-run planning should assume occasional `20s+` item latencies.
+- The next live run should produce substep timing breakdowns automatically, which will let us answer whether `goto`, UI readiness, panel entry, selection, or reopen-confirm dominates the `saved` path.

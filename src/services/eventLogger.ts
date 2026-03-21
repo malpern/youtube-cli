@@ -10,14 +10,19 @@ export interface EventLogger {
   logEvent: (phase: Phase, level: EventRecord["level"], eventType: string, message: string, details?: Record<string, unknown>) => void;
 }
 
-export function createEventLogger(eventsPath: string, logPath: string, runId: string): EventLogger {
+export function createEventLogger(
+  eventsPath: string,
+  logPath: string,
+  runId: string,
+  consoleStream: NodeJS.WritableStream = process.stdout
+): EventLogger {
   const logger = pino(
     {
       level: "info",
       base: { runId }
     },
     pino.multistream([
-      { stream: process.stdout },
+      { stream: consoleStream },
       { stream: fs.createWriteStream(logPath, { flags: "a" }) }
     ])
   );

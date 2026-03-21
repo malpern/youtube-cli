@@ -25,8 +25,11 @@ function writeInventory(rootDir: string, runId: string, items: InventoryItem[]):
       {
         currentUrl: "https://www.youtube.com/playlist?list=WL",
         capturedAt: "2026-03-21T00:00:00.000Z",
+        metadataVersion: 1,
         total: items.length,
         scrollPasses: 1,
+        requestedMaxItems: null,
+        bounded: false,
         items
       },
       null,
@@ -99,8 +102,38 @@ describe("readSourceSnapshot", () => {
     const snapshot = readSourceSnapshot(inventoryPath);
 
     expect(snapshot.runId).toBe("run-a");
+    expect(snapshot.metadataVersion).toBe(1);
+    expect(snapshot.metadataComplete).toBe(true);
     expect(snapshot.total).toBe(2);
+    expect(snapshot.requestedMaxItems).toBeNull();
+    expect(snapshot.bounded).toBe(false);
     expect(snapshot.fingerprint.orderedHash).toBe(computeInventoryFingerprint(snapshot.items).orderedHash);
+  });
+
+  it("marks legacy snapshots without metadata as incomplete", () => {
+    const rootDir = makeTempRoot();
+    const runDir = path.join(rootDir, "runs", "legacy-run");
+    fs.mkdirSync(runDir, { recursive: true });
+    const inventoryPath = path.join(runDir, "inventory.json");
+    fs.writeFileSync(
+      inventoryPath,
+      `${JSON.stringify(
+        {
+          currentUrl: "https://www.youtube.com/playlist?list=WL",
+          capturedAt: "2026-03-21T00:00:00.000Z",
+          total: 1,
+          scrollPasses: 1,
+          items: [makeItem(1)]
+        },
+        null,
+        2
+      )}\n`
+    );
+
+    const snapshot = readSourceSnapshot(inventoryPath);
+
+    expect(snapshot.metadataVersion).toBeNull();
+    expect(snapshot.metadataComplete).toBe(false);
   });
 });
 
@@ -110,8 +143,12 @@ describe("assertUsableSourceSnapshot", () => {
       runId: "run-a",
       currentUrl: "",
       capturedAt: "",
+      metadataVersion: 1,
+      metadataComplete: true,
       total: 1,
       scrollPasses: 1,
+      requestedMaxItems: null,
+      bounded: false,
       fingerprint: computeInventoryFingerprint([makeItem(1)]),
       items: [makeItem(1)]
     };
@@ -124,8 +161,12 @@ describe("assertUsableSourceSnapshot", () => {
       runId: "run-empty",
       currentUrl: "",
       capturedAt: "",
+      metadataVersion: 1,
+      metadataComplete: true,
       total: 0,
       scrollPasses: 0,
+      requestedMaxItems: null,
+      bounded: false,
       fingerprint: computeInventoryFingerprint([]),
       items: []
     };

@@ -16,6 +16,36 @@ export interface InventoryDiscrepancySummary {
   }>;
 }
 
+export function findMatchingWindowStart(sourceItems: InventoryItem[], targetItems: InventoryItem[]): number | null {
+  if (sourceItems.length === 0) {
+    return 0;
+  }
+
+  if (targetItems.length < sourceItems.length) {
+    return null;
+  }
+
+  const lastStartIndex = targetItems.length - sourceItems.length;
+  for (let startIndex = 0; startIndex <= lastStartIndex; startIndex += 1) {
+    let matched = true;
+    for (let offset = 0; offset < sourceItems.length; offset += 1) {
+      const source = sourceItems[offset];
+      const target = targetItems[startIndex + offset];
+
+      if (!source || !target || !itemsEquivalent(source, target)) {
+        matched = false;
+        break;
+      }
+    }
+
+    if (matched) {
+      return startIndex;
+    }
+  }
+
+  return null;
+}
+
 export function compareOrderedPrefix(sourceItems: InventoryItem[], targetItems: InventoryItem[]): VerificationMismatch[] {
   const mismatches: VerificationMismatch[] = [];
 
@@ -127,6 +157,24 @@ export function discrepanciesAreClear(summary: InventoryDiscrepancySummary): boo
 
 function normalizeText(value: string | null): string | null {
   return value?.replace(/\s+/g, " ").trim().toLowerCase() ?? null;
+}
+
+function itemsEquivalent(source: InventoryItem, target: InventoryItem): boolean {
+  if (source.videoId && target.videoId) {
+    return source.videoId === target.videoId;
+  }
+
+  if (!source.videoId && source.videoUrl && target.videoUrl) {
+    return source.videoUrl === target.videoUrl;
+  }
+
+  const normalizedSourceTitle = normalizeText(source.title);
+  const normalizedTargetTitle = normalizeText(target.title);
+  if (normalizedSourceTitle && normalizedTargetTitle) {
+    return normalizedSourceTitle === normalizedTargetTitle;
+  }
+
+  return source.unavailableKind === target.unavailableKind;
 }
 
 function buildOccurrenceKeys(items: InventoryItem[]): string[] {

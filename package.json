@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=25 <26"
+  },
   "bin": {
     "youtube-watchlist": "./src/cli.ts"
   },
@@ -27,5 +30,6 @@
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
-  }
+  },
+  "packageManager": "npm@11.11.0"
 }

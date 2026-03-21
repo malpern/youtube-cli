@@ -6,8 +6,13 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { ensureVideoSavedToPlaylist } from "../browser/youtube/saveToPlaylist.js";
+import type { SaveToPlaylistTimings } from "../browser/youtube/saveToPlaylist.js";
 import type { InventoryItem } from "../models/types.js";
+import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
+import { pauseRunForAuthentication } from "../services/authPause.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
+import { computeMutationPacingDelay, resolveMutationPacingPolicy } from "../services/mutationPacing.js";
+import { resolveMutationRetryPolicy, runWithRetries } from "../services/mutationRetry.js";
 import { readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourceSnapshot.js";
 import { assessSourceItemPolicy } from "../services/sourceItemPolicy.js";
 import { planRepair } from "../services/repairPlanner.js";
@@ -40,6 +45,8 @@ function appendRepairOperation(
     videoId: string | null;
     videoUrl: string | null;
     result: string;
+    attempts: number;
+    timings?: SaveToPlaylistTimings;
     error?: string;
     timestamp: string;
   }
@@ -55,9 +62,18 @@ export async function runRepair(command: Command): Promise<void> {
     milestoneEvery?: string;
     maxItems?: string;
     resume?: boolean;
+    maxAttempts?: string;
+    retryInitialDelayMs?: string;
+    retryMaxDelayMs?: string;
+    jitterMinMs?: string;
+    jitterMaxMs?: string;
+    cooldownEvery?: string;
+    cooldownMs?: string;
   }>();
   const targetPlaylist = getTargetPlaylist(command);
   const milestoneEvery = parsePositiveInt(localOptions.milestoneEvery, 5);
+  const retryPolicy = resolveMutationRetryPolicy(localOptions);
+  const pacingPolicy = resolveMutationPacingPolicy(localOptions);
   const operationsPath = path.join(ctx.artifacts.runDir, "repair-operations.jsonl");
   const verificationPath = resolveVerificationReportPath(ctx.rootDir, ctx.runId, localOptions.verificationRunId);
   const verificationReport = readVerificationReport(verificationPath);
@@ -98,6 +114,10 @@ export async function runRepair(command: Command): Promise<void> {
         processedCount: 0,
         remainingItems: repairItems,
         repairedCount: 0,
+        savedCount: 0,
+        alreadySavedCount: 0,
+        policySkippedCount: 0,
+        retryExhaustedCount: 0,
         skippedCount: 0,
         failedCount: 0
       };
@@ -117,6 +137,10 @@ export async function runRepair(command: Command): Promise<void> {
       processed: resumePlan.processedCount,
       total: repairItems.length,
       repairedCount: resumePlan.repairedCount,
+      savedCount: resumePlan.savedCount,
+      alreadySavedCount: resumePlan.alreadySavedCount,
+      policySkippedCount: resumePlan.policySkippedCount,
+      retryExhaustedCount: resumePlan.retryExhaustedCount,
       skippedCount: resumePlan.skippedCount,
       failedCount: resumePlan.failedCount
     });
@@ -134,12 +158,20 @@ export async function runRepair(command: Command): Promise<void> {
       retryCount: repairItems.length,
       targetPlaylist,
       resumed: resumePlan.resumed,
-      resumeProcessedCount: resumePlan.processedCount
+      resumeProcessedCount: resumePlan.processedCount,
+      retryPolicy,
+      pacingPolicy
     });
 
     let repairedCount = resumePlan.repairedCount;
+    let savedCount = resumePlan.savedCount;
+    let alreadySavedCount = resumePlan.alreadySavedCount;
+    let policySkippedCount = resumePlan.policySkippedCount;
+    let retryExhaustedCount = resumePlan.retryExhaustedCount;
     let skippedCount = resumePlan.skippedCount;
     let failedCount = resumePlan.failedCount;
+
+    await assertAuthenticatedYouTubeSession(session.page, ctx.config, "repair.start", { navigate: true });
 
     for (const [index, item] of resumePlan.remainingItems.entries()) {
       const policy = assessSourceItemPolicy(item);
@@ -150,9 +182,11 @@ export async function runRepair(command: Command): Promise<void> {
           videoId: item.videoId,
           videoUrl: item.videoUrl,
           result: `skipped-${policy.policy}`,
+          attempts: 1,
           error: policy.reason,
           timestamp: new Date().toISOString()
         });
+        policySkippedCount += 1;
         skippedCount += 1;
       } else {
         try {
@@ -161,19 +195,80 @@ export async function runRepair(command: Command): Promise<void> {
             throw new Error(`Repair candidate '${item.sourceIndex}' is missing a videoUrl`);
           }
 
-          const result = await ensureVideoSavedToPlaylist(session.page, videoUrl, targetPlaylist);
+          const { result: response, attempts } = await runWithRetries({
+            policy: retryPolicy,
+            run: async () => {
+              await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.before`);
+              try {
+                const response = await ensureVideoSavedToPlaylist(session.page, videoUrl, targetPlaylist, async () => {
+                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.open-save-panel`);
+                });
+                await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.after`);
+                return response;
+              } catch (error) {
+                await throwIfAuthenticationLost(session.page, ctx.config, `repair.item.${item.sourceIndex}.failure`, error);
+                throw new Error("Authentication guard should have thrown before continuing");
+              }
+            },
+            onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
+              ctx.logEvent("repair", "warn", "repair.item-retry", "Retrying repair item after failure", {
+                sourceIndex: item.sourceIndex,
+                title: item.title,
+                attempt,
+                nextAttempt,
+                delayMs,
+                error: error.message,
+                targetPlaylist
+              });
+            },
+            sleep: async (delayMs) => {
+              await session.page.waitForTimeout(delayMs);
+            },
+            shouldRetry: (error) => !(error instanceof AuthenticationRequiredError)
+          });
           appendRepairOperation(operationsPath, {
             sourceIndex: item.sourceIndex,
             title: item.title,
             videoId: item.videoId,
             videoUrl,
-            result,
+            result: response.result,
+            attempts,
+            timings: response.timings,
             timestamp: new Date().toISOString()
           });
-          if (result === "saved" || result === "already-saved") {
+          if (response.result === "saved" || response.result === "already-saved") {
             repairedCount += 1;
+            if (response.result === "saved") {
+              savedCount += 1;
+            } else {
+              alreadySavedCount += 1;
+            }
           }
         } catch (error) {
+          if (error instanceof AuthenticationRequiredError) {
+            const completedCount = resumePlan.processedCount + index;
+            pauseRunForAuthentication({
+              ctx,
+              phase: "repair",
+              error,
+              payload: {
+                verificationPath,
+                sourceSnapshotRunId: sourceSnapshot.runId,
+                targetPlaylist,
+                processed: completedCount,
+                total: repairItems.length,
+                repairedCount,
+                savedCount,
+                alreadySavedCount,
+                policySkippedCount,
+                retryExhaustedCount,
+                skippedCount,
+                failedCount
+              }
+            });
+            return;
+          }
+
           const message = error instanceof Error ? error.message : String(error);
           const screenshotPath = path.join(ctx.artifacts.screenshotsDir, `repair-failure-${item.sourceIndex}.png`);
           await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
@@ -183,10 +278,20 @@ export async function runRepair(command: Command): Promise<void> {
             videoId: item.videoId,
             videoUrl: item.videoUrl,
             result: "failed",
+            attempts: retryPolicy.maxAttempts,
             error: message,
             timestamp: new Date().toISOString()
           });
+          retryExhaustedCount += 1;
           failedCount += 1;
+          ctx.logEvent("repair", "error", "repair.item-failed", "Repair item failed", {
+            sourceIndex: item.sourceIndex,
+            title: item.title,
+            error: message,
+            attempts: retryPolicy.maxAttempts,
+            ...(fs.existsSync(screenshotPath) ? { screenshotPath } : {}),
+            targetPlaylist
+          });
         }
       }
 
@@ -196,6 +301,10 @@ export async function runRepair(command: Command): Promise<void> {
           processed: processedCount,
           total: repairItems.length,
           repairedCount,
+          savedCount,
+          alreadySavedCount,
+          policySkippedCount,
+          retryExhaustedCount,
           skippedCount,
           failedCount,
           targetPlaylist
@@ -209,9 +318,25 @@ export async function runRepair(command: Command): Promise<void> {
         processed: processedCount,
         total: repairItems.length,
         repairedCount,
+        savedCount,
+        alreadySavedCount,
+        policySkippedCount,
+        retryExhaustedCount,
         skippedCount,
         failedCount
       });
+
+      const pacingDelay = computeMutationPacingDelay(pacingPolicy, processedCount);
+      if (pacingDelay.totalDelayMs > 0 && processedCount < repairItems.length) {
+        ctx.logEvent("repair", "info", "repair.pacing", "Sleeping between repair items to throttle the mutation rate", {
+          processedCount,
+          jitterMs: pacingDelay.jitterMs,
+          cooldownMs: pacingDelay.cooldownMs,
+          totalDelayMs: pacingDelay.totalDelayMs,
+          targetPlaylist
+        });
+        await session.page.waitForTimeout(pacingDelay.totalDelayMs);
+      }
     }
 
     ctx.logEvent("repair", "info", "repair.complete", "Repair pass completed", {
@@ -220,12 +345,39 @@ export async function runRepair(command: Command): Promise<void> {
       targetPlaylist,
       total: repairItems.length,
       repairedCount,
+      savedCount,
+      alreadySavedCount,
+      policySkippedCount,
+      retryExhaustedCount,
       skippedCount,
       failedCount,
       operationsPath
     });
     ctx.db.upsertRunState("repair", "complete");
   } catch (error) {
+    if (error instanceof AuthenticationRequiredError) {
+      pauseRunForAuthentication({
+        ctx,
+        phase: "repair",
+        error,
+        payload: {
+          verificationPath,
+          sourceSnapshotRunId: sourceSnapshot.runId,
+          targetPlaylist,
+          processed: resumePlan.processedCount,
+          total: repairItems.length,
+          repairedCount: resumePlan.repairedCount,
+          savedCount: resumePlan.savedCount,
+          alreadySavedCount: resumePlan.alreadySavedCount,
+          policySkippedCount: resumePlan.policySkippedCount,
+          retryExhaustedCount: resumePlan.retryExhaustedCount,
+          skippedCount: resumePlan.skippedCount,
+          failedCount: resumePlan.failedCount
+        }
+      });
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     ctx.logEvent("repair", "error", "repair.failed", "Repair pass failed", {
       error: message,

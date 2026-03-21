@@ -134,3 +134,38 @@ Action:
 3. Keep that Chrome window open for the whole development session.
 4. Run all CLI commands with `--browser-cdp-url http://127.0.0.1:9222`.
 5. Do not run profile-owning commands in parallel.
+
+## Post-Cooldown Resume
+
+If Google pauses the session again, use this order:
+
+1. Stop retrying immediately and wait out the cooldown. Plan for `48 hours` minimum; if Google still blocks sign-in, use `7 days` from the last failed attempt as the safer bound.
+2. Open plain `Google Chrome` on the same dedicated profile and the same network, then sign in manually.
+3. Keep that browser open and confirm `doctor` reports signed-in YouTube state over CDP.
+4. Run a tiny validation copy against the paused source snapshot, such as `--max-items 5`, before restarting the full job.
+5. Resume the full copy from the existing checkpoint and source snapshot with `--resume` on the paused copy run id.
+
+Example commands:
+
+```bash
+open -na "Google Chrome" --args \
+  --remote-debugging-port=9222 \
+  --user-data-dir="/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile" \
+  https://www.youtube.com
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts doctor \
+  --browser-cdp-url http://127.0.0.1:9222
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts copy \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --source-run-id 2026-03-21T18-24-08-552Z-vvihmn \
+  --start-index 70 \
+  --max-items 5
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts \
+  --run-id 2026-03-21T18-40-18-882Z-867mr0 \
+  copy \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --source-run-id 2026-03-21T18-24-08-552Z-vvihmn \
+  --resume
+```

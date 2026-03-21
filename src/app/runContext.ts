@@ -21,7 +21,13 @@ export interface RunContext {
   saveCheckpoint: (phase: Phase, payload: Record<string, unknown>) => void;
 }
 
-export function createRunContext(command: Command, phase: Phase): RunContext {
+export function createRunContext(
+  command: Command,
+  phase: Phase,
+  contextOptions: {
+    consoleStream?: NodeJS.WritableStream;
+  } = {}
+): RunContext {
   const commandLike = command as Command & {
     optsWithGlobals?: () => Record<string, unknown>;
   };
@@ -58,7 +64,7 @@ export function createRunContext(command: Command, phase: Phase): RunContext {
   const runId = options.runId ?? makeRunId();
   const artifacts = createRunArtifacts(path.resolve(rootDir), runId, config.artifactsDirName);
   const db = openDatabase(artifacts.dbPath, runId);
-  const eventLogger = createEventLogger(artifacts.eventsPath, artifacts.logPath, runId);
+  const eventLogger = createEventLogger(artifacts.eventsPath, artifacts.logPath, runId, contextOptions.consoleStream);
 
   db.upsertRunState(phase, "running");
   eventLogger.logEvent(phase, "info", "run.started", "Run started", {

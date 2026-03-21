@@ -10,6 +10,10 @@ import { runProbeSelectors } from "./phases/probeSelectors.js";
 import { runRepair } from "./phases/repair.js";
 import { runVerify } from "./phases/verify.js";
 import { runCopyPerformance } from "./phases/copyPerformance.js";
+import { runPreflight } from "./phases/preflight.js";
+import { runDelete } from "./phases/delete.js";
+import { runWorkflow } from "./phases/run.js";
+import { runStatus } from "./phases/status.js";
 
 const program = new Command();
 
@@ -43,6 +47,15 @@ program
   });
 
 program
+  .command("status")
+  .description("Read the latest or selected run directory and summarize progress")
+  .option("--inspect-run-id <id>", "Specific run id to inspect instead of the latest run")
+  .option("--json", "Print the status summary as JSON")
+  .action(async function action() {
+    await runStatus(this);
+  });
+
+program
   .command("setup")
   .description("Ensure the target playlist exists by using the save-to-playlist UI on a Watch Later video")
   .option("--target-playlist <name>", "Playlist name to ensure exists", "Old Watch")
@@ -72,8 +85,16 @@ program
   .description("Copy source snapshot items into the target playlist using the watch-page save panel")
   .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
   .option("--source-run-id <id>", "Run id containing the inventory snapshot to use as the source of truth")
+  .option("--start-index <index>", "Start processing at this source index", "1")
   .option("--max-items <count>", "Stop after processing this many snapshot rows")
   .option("--milestone-every <count>", "Emit a copy progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per copy item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between copy attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between copy attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between copy items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between copy items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed copy items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
   .option("--resume", "Resume from the checkpoint in the selected run directory")
   .action(async function action() {
     await runCopy(this);
@@ -98,6 +119,13 @@ program
   .option("--verification-run-id <id>", "Run id containing the verification report to repair from")
   .option("--max-items <count>", "Stop after repairing this many planned items")
   .option("--milestone-every <count>", "Emit a repair progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per repair item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between repair attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between repair attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between repair items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between repair items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed repair items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
   .option("--resume", "Resume from the checkpoint in the selected run directory")
   .action(async function action() {
     await runRepair(this);
@@ -110,6 +138,54 @@ program
   .option("--write-path <path>", "Optional JSON output path override")
   .action(async function action() {
     await runCopyPerformance(this);
+  });
+
+program
+  .command("preflight")
+  .description("Estimate whether a source snapshot is structurally eligible for a real full run and how long copy may take")
+  .requiredOption("--copy-run-id <ids...>", "Copy run ids to use as the performance baseline")
+  .option("--source-run-id <id>", "Run id containing the inventory snapshot to evaluate")
+  .option("--write-path <path>", "Optional JSON output path override")
+  .action(async function action() {
+    await runPreflight(this);
+  });
+
+program
+  .command("delete")
+  .description("Remove verified source snapshot items from Watch Later")
+  .option("--verification-run-id <id>", "Run id containing the verification report to delete from")
+  .option("--max-items <count>", "Stop after deleting this many verified items")
+  .option("--milestone-every <count>", "Emit a delete progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per delete item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between delete attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between delete attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between delete items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between delete items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed delete items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--resume", "Resume from the checkpoint in the selected run directory")
+  .option("--confirm-delete", "Acknowledge destructive deletion from Watch Later")
+  .action(async function action() {
+    await runDelete(this);
+  });
+
+program
+  .command("run")
+  .description("Run the non-destructive setup, inventory, copy, and verify workflow")
+  .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
+  .option("--max-items <count>", "Limit the workflow to the first N source items")
+  .option("--milestone-every <count>", "Emit copy progress milestones every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per copy item inside the workflow", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between workflow copy attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between workflow copy attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between workflow copy items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between workflow copy items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed workflow copy items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
+  .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
+  .action(async function action() {
+    await runWorkflow(this);
   });
 
 await program.parseAsync(process.argv);

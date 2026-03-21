@@ -6,6 +6,8 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { ensurePlaylistExistsFromVideo } from "../browser/youtube/saveToPlaylist.js";
+import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
+import { pauseRunForAuthentication } from "../services/authPause.js";
 
 function getTargetPlaylist(command: Command): string {
   const opts = command.opts<{ targetPlaylist?: string }>();
@@ -34,12 +36,15 @@ export async function runSetup(command: Command): Promise<void> {
   const session = await launchBrowserSession(ctx.config);
 
   try {
+    await assertAuthenticatedYouTubeSession(session.page, ctx.config, "setup.start", { navigate: true });
     const firstVideoUrl = await getFirstWatchLaterVideoUrl(session.page, watchLaterUrl);
     ctx.logEvent("setup", "info", "setup.source-video", "Resolved first Watch Later video", {
       firstVideoUrl
     });
 
-    const outcome = await ensurePlaylistExistsFromVideo(session.page, firstVideoUrl, targetPlaylist);
+    const outcome = await ensurePlaylistExistsFromVideo(session.page, firstVideoUrl, targetPlaylist, async () => {
+      await assertAuthenticatedYouTubeSession(session.page, ctx.config, "setup.open-save-panel");
+    });
     await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
 
     const payload = {
@@ -54,6 +59,34 @@ export async function runSetup(command: Command): Promise<void> {
     ctx.logEvent("setup", "info", "setup.complete", "Setup completed", payload);
     ctx.db.upsertRunState("setup", "complete");
   } catch (error) {
+    if (error instanceof AuthenticationRequiredError) {
+      pauseRunForAuthentication({
+        ctx,
+        phase: "setup",
+        error,
+        payload: {
+          targetPlaylist
+        }
+      });
+      return;
+    }
+
+    try {
+      await throwIfAuthenticationLost(session.page, ctx.config, "setup.failed", error);
+    } catch (authError) {
+      if (authError instanceof AuthenticationRequiredError) {
+        pauseRunForAuthentication({
+          ctx,
+          phase: "setup",
+          error: authError,
+          payload: {
+            targetPlaylist
+          }
+        });
+        return;
+      }
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
     ctx.logEvent("setup", "error", "setup.failed", "Setup failed", { error: message, targetPlaylist });

@@ -19,3 +19,8 @@ Current ADRs:
 - [0005 Test Strategy Favors Deterministic Unit Coverage](/Users/malpern/local-code/youtube-watchlist/docs/adr/0005-test-strategy-favors-deterministic-unit-coverage.md)
 - [0006 Unavailable Item Policy](/Users/malpern/local-code/youtube-watchlist/docs/adr/0006-unavailable-item-policy.md)
 - [0007 Performance Analysis From Durable Run Artifacts](/Users/malpern/local-code/youtube-watchlist/docs/adr/0007-performance-analysis-from-durable-run-artifacts.md)
+- [0008 Bounded Retries For Mutation Phases](/Users/malpern/local-code/youtube-watchlist/docs/adr/0008-bounded-retries-for-mutation-phases.md)
+- [0009 Explicit Production Delete Authorization](/Users/malpern/local-code/youtube-watchlist/docs/adr/0009-explicit-production-delete-authorization.md)
+- [0010 Bounded Source Snapshots Cannot Authorize Delete](/Users/malpern/local-code/youtube-watchlist/docs/adr/0010-bounded-source-snapshots-cannot-authorize-delete.md)
+- [0011 Versioned Verification Artifacts](/Users/malpern/local-code/youtube-watchlist/docs/adr/0011-versioned-verification-artifacts.md)
+- [0012 Auth Loss Pauses Runs And Mutations Are Throttled](/Users/malpern/local-code/youtube-watchlist/docs/adr/0012-auth-loss-pauses-runs-and-mutations-are-throttled.md)
