@@ -240,6 +240,7 @@ async function monitorRunWorkflow(args: {
     const copyOperations = readNewJsonLines<{
       sourceIndex: number;
       title: string | null;
+      channelName: string | null;
       videoId: string | null;
       videoUrl: string | null;
       result: string;
@@ -255,6 +256,7 @@ async function monitorRunWorkflow(args: {
         item: {
           sourceIndex: operation.sourceIndex,
           title: operation.title,
+          channelName: operation.channelName,
           videoId: operation.videoId,
           videoUrl: operation.videoUrl,
           thumbnailUrl: thumbnailUrlForVideoId(operation.videoId),
@@ -315,6 +317,7 @@ async function monitorDeleteWorkflow(args: {
     const deleteOperations = readNewJsonLines<{
       sourceIndex: number;
       title: string | null;
+      channelName: string | null;
       videoId: string | null;
       videoUrl: string | null;
       result: string;
@@ -330,6 +333,7 @@ async function monitorDeleteWorkflow(args: {
         item: {
           sourceIndex: operation.sourceIndex,
           title: operation.title,
+          channelName: operation.channelName,
           videoId: operation.videoId,
           videoUrl: operation.videoUrl,
           thumbnailUrl: thumbnailUrlForVideoId(operation.videoId),

@@ -12,8 +12,6 @@ struct MoveItemSnapshot: Identifiable, Equatable {
     let thumbnailURL: URL?
     let result: String
 
-    // TODO: Extend the TypeScript `move --json` event payload to provide channel avatar,
-    // view count, and published time so the macOS app can replace this mock metadata.
     var id: Int {
         sourceIndex
     }

@@ -157,7 +157,7 @@ struct RealMoveService: MoveService {
                 item: MoveItemSnapshot(
                     sourceIndex: item.sourceIndex,
                     title: item.title ?? "Untitled video",
-                    channelName: nil,
+                    channelName: item.channelName,
                     channelAvatarURL: nil,
                     viewCountText: nil,
                     publishedTimeText: nil,
@@ -289,6 +289,7 @@ private struct MoveWorkflowPayload: Decodable {
 private struct MoveItemPayload: Decodable {
     let sourceIndex: Int
     let title: String?
+    let channelName: String?
     let videoId: String?
     let videoUrl: String?
     let thumbnailUrl: String?

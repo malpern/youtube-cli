@@ -27,6 +27,7 @@ function appendCopyOperation(
   entry: {
     sourceIndex: number;
     title: string | null;
+    channelName: string | null;
     videoId: string | null;
     videoUrl: string | null;
     result: string;
@@ -318,6 +319,7 @@ async function processCopyItem(args: {
     appendCopyOperation(operationsPath, {
       sourceIndex: item.sourceIndex,
       title: item.title,
+      channelName: item.channelName,
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "expected-non-copyable",
@@ -340,6 +342,7 @@ async function processCopyItem(args: {
     appendCopyOperation(operationsPath, {
       sourceIndex: item.sourceIndex,
       title: item.title,
+      channelName: item.channelName,
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "ambiguous-source-item",
@@ -399,6 +402,7 @@ async function processCopyItem(args: {
     appendCopyOperation(operationsPath, {
       sourceIndex: item.sourceIndex,
       title: item.title,
+      channelName: item.channelName,
       videoId: item.videoId,
       videoUrl,
       result: response.result,
@@ -429,6 +433,7 @@ async function processCopyItem(args: {
     appendCopyOperation(operationsPath, {
       sourceIndex: item.sourceIndex,
       title: item.title,
+      channelName: item.channelName,
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       result: "failed",

@@ -22,6 +22,7 @@ function appendDeleteOperation(
   entry: {
     sourceIndex: number;
     title: string | null;
+    channelName: string | null;
     videoId: string | null;
     videoUrl: string | null;
     result: string;
@@ -176,6 +177,7 @@ export async function runDelete(command: Command): Promise<void> {
         appendDeleteOperation(operationsPath, {
           sourceIndex: item.sourceIndex,
           title: item.title,
+          channelName: item.channelName,
           videoId: item.videoId,
           videoUrl: item.videoUrl,
           result: "removed",
@@ -209,6 +211,7 @@ export async function runDelete(command: Command): Promise<void> {
         appendDeleteOperation(operationsPath, {
           sourceIndex: item.sourceIndex,
           title: item.title,
+          channelName: item.channelName,
           videoId: item.videoId,
           videoUrl: item.videoUrl,
           result: "failed",
