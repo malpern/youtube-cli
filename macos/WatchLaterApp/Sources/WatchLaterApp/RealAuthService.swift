@@ -16,8 +16,10 @@ struct RealAuthService: AuthService {
     }
 
     func openLogin() async throws {
+        log.info("Opening Chrome login at profile: \(CLIBackendPaths.chromeProfileURL.path, privacy: .public)")
         try FileManager.default.createDirectory(at: CLIBackendPaths.chromeProfileURL, withIntermediateDirectories: true)
         try AutomationBrowserLauncher.openLogin()
+        log.info("Chrome login launched successfully")
     }
 
     private func buildResult(from response: DoctorResponse) -> AuthCheckResult {

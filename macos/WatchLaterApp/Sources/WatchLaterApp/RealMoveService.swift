@@ -36,6 +36,7 @@ struct RealMoveService: MoveService {
                         let event = try Self.decodeMoveEvent(from: lineData, state: state)
                         continuation.yield(event)
                     } catch {
+                        log.error("Move stream decode error: \(error.localizedDescription, privacy: .public)")
                         continuation.finish(throwing: error)
                         if process.isRunning {
                             process.terminate()
@@ -72,11 +73,13 @@ struct RealMoveService: MoveService {
                 let stderrText = state.stderrText
 
                 if terminatedProcess.terminationStatus == 0 || state.didEmitResult {
+                    log.info("Move process exited cleanly, status=\(terminatedProcess.terminationStatus)")
                     continuation.finish()
                     return
                 }
 
                 let humanMessage = Self.extractHumanReadableError(from: stderrText)
+                log.error("Move process failed, status=\(terminatedProcess.terminationStatus), error: \(humanMessage, privacy: .public)")
                 continuation.finish(throwing: CLIProcessError(description: humanMessage))
             }
 
@@ -89,8 +92,10 @@ struct RealMoveService: MoveService {
             }
 
             do {
+                log.info("Launching move process: \(self.moveArguments(for: destination).joined(separator: " "), privacy: .public)")
                 try process.run()
             } catch {
+                log.error("Move process launch failed: \(error.localizedDescription, privacy: .public)")
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
                 continuation.finish(throwing: error)

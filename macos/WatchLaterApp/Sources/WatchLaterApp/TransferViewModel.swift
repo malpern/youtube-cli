@@ -295,9 +295,11 @@ final class TransferViewModel {
 
     func reloadPlaylistsForBackendChange() async {
         guard !isRunningTransfer else {
+            log.info("reloadPlaylistsForBackendChange: skipped, transfer running")
             return
         }
 
+        log.info("Backend changed to \(self.preferences.backendMode.rawValue, privacy: .public), reloading playlists")
         hasLoadedPlaylists = false
         let customPlaylists = availablePlaylists.filter(\.isDraft)
         availablePlaylists = customPlaylists
@@ -570,6 +572,9 @@ final class TransferViewModel {
                 recordCompletedItemIfNeeded(item)
             }
             if let completed, let total {
+                if completed == 1 || completed == total || completed % 10 == 0 {
+                    log.info("Event: item phase=\(phase.rawValue, privacy: .public) \(completed)/\(total) title=\(item.title, privacy: .public)")
+                }
                 updateProgress(for: phase, completed: completed, total: total, status: completed >= total ? .completed : .running)
             }
             updateStatusMessage(for: phase)
