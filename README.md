@@ -27,7 +27,7 @@ Install dependencies:
 npm install
 ```
 
-Local build now includes three gates in order: typecheck, the Vitest suite, and a live YouTube DOM smoke suite before TypeScript compilation finishes. If the live YouTube selectors drift, `npm run build` fails.
+Local `npm run build` stays fast and only runs typecheck, the Vitest suite, and TypeScript compilation. The live YouTube DOM smoke suite is reserved for `npm run build:release` and the release workflow.
 
 The repo now assumes Node 25.x. Use the version in [.nvmrc](/Users/malpern/local-code/youtube-cli/.nvmrc) or [.node-version](/Users/malpern/local-code/youtube-cli/.node-version) so native modules like `better-sqlite3` stay ABI-compatible with the CLI and tests.
 
@@ -189,11 +189,17 @@ CLI flags override config values when both are provided.
 
 ## Build validation
 
-The build now runs a live DOM smoke suite:
+Normal local development build:
+
+```bash
+npm run build
+```
+
+Release-only build with the live DOM smoke suite:
 
 ```bash
 npm run test:live-dom
-npm run build
+npm run build:release
 ```
 
 By default the live smoke suite reads `config.local.json`. You can override that with `YOUTUBE_WATCHLIST_CONFIG=/absolute/path/to/config.json`.
@@ -207,6 +213,15 @@ The smoke suite fails the build when any of these checks break:
 - the watch-page `Save` entry point or playlist panel no longer opens
 
 Each run writes a JSON report and failure screenshots under `runs/live-dom-smoke-*/`.
+
+## Release workflow
+
+GitHub Actions keeps regular CI fast and runs the live DOM suite only in `.github/workflows/release-live-dom.yml` for published releases or manual dispatch.
+
+That workflow expects:
+
+- `YOUTUBE_WATCHLIST_STORAGE_STATE_JSON`: a Playwright storage-state JSON blob for an authenticated YouTube session
+- `YOUTUBE_WATCHLIST_EXPECTED_ACCOUNT`: optional account label fragment for fail-closed account validation
 
 ## Docs
 

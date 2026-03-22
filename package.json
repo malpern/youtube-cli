@@ -15,7 +15,8 @@
     "probe": "tsx src/cli.ts probe-selectors",
     "test:live-dom": "tsx src/browser/youtube/liveDomSmoke.ts",
     "build:compile": "tsc -p tsconfig.json",
-    "build": "npm run typecheck && npm test && npm run test:live-dom && npm run build:compile",
+    "build": "npm run typecheck && npm test && npm run build:compile",
+    "build:release": "npm run typecheck && npm test && npm run test:live-dom && npm run build:compile",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
