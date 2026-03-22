@@ -44,6 +44,12 @@ You can launch the dedicated browser with:
 npm run browser:open
 ```
 
+When you want to refresh the headless/release auth artifact from that trusted live browser session, export Playwright storage state:
+
+```bash
+npx tsx src/cli.ts export-storage-state --browser-cdp-url http://127.0.0.1:9222 --output .local/youtube-storage-state.json
+```
+
 The bundled macOS app now uses the same dedicated browser-launch pattern for its login/browser actions, so local app-driven auth and CLI-driven auth stay on the same CDP/profile path.
 
 Environment check:
@@ -211,6 +217,11 @@ npm run build:release
 ```
 
 By default the live smoke suite reads `config.local.json`. You can override that with `YOUTUBE_WATCHLIST_CONFIG=/absolute/path/to/config.json`.
+
+Recommended auth split:
+
+- local operator work: reuse a persistent headed browser over CDP
+- release/headless checks: export storage state from that trusted CDP browser, then run the headless check against the exported file
 
 If you launch the browser through Playwright instead of attaching over CDP, you can reduce visual noise in headed local runs with `--browser-window-width`, `--browser-window-height`, `--browser-window-position-x`, `--browser-window-position-y`, `--browser-viewport-width`, and `--browser-viewport-height`. `doctor` now reports whether those settings apply or are ignored.
 

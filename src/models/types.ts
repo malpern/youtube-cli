@@ -1,5 +1,6 @@
 export type Phase =
   | "login"
+  | "export-storage-state"
   | "doctor"
   | "setup"
   | "probe-selectors"

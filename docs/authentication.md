@@ -69,6 +69,16 @@ After the browser is open and signed in, attach the CLI with:
 npx tsx src/cli.ts doctor --browser-cdp-url http://127.0.0.1:9222
 ```
 
+If you want to feed a short headless check from that trusted live browser session, export Playwright storage state from the CDP-attached browser:
+
+```bash
+npx tsx src/cli.ts export-storage-state \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --output .local/youtube-storage-state.json
+```
+
+That gives you a refreshed storage-state file without making headless mode the primary local auth model.
+
 ## What Not To Do
 
 Avoid these flows unless a future implementation proves otherwise:
@@ -144,6 +154,12 @@ Action:
 3. Keep that Chrome window open for the whole development session, ideally on its own Space.
 4. Run all CLI commands with `--browser-cdp-url http://127.0.0.1:9222`.
 5. Do not run profile-owning commands in parallel.
+
+For release or short non-interactive headless checks:
+
+1. Refresh `.local/youtube-storage-state.json` from the trusted CDP browser with `export-storage-state`.
+2. Point the headless run at that storage-state file.
+3. If auth drifts, repair it in the persistent headed CDP browser first instead of trying to reauth headlessly.
 
 ## Post-Cooldown Resume
 

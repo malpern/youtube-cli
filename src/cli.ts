@@ -2,6 +2,7 @@
 import { Command } from "commander";
 
 import { runLogin } from "./phases/login.js";
+import { runExportStorageState } from "./phases/exportStorageState.js";
 import { runDoctor } from "./phases/doctor.js";
 import { runInventory } from "./phases/inventory.js";
 import { runCopy } from "./phases/copy.js";
@@ -45,6 +46,15 @@ program
   .option("--timeout-minutes <minutes>", "How long to wait for manual sign-in detection", "10")
   .action(async function action() {
     await runLogin(this);
+  });
+
+program
+  .command("export-storage-state")
+  .description("Export Playwright storage state from the trusted live CDP browser session for headless checks")
+  .option("--output <path>", "Path to write the exported storage state JSON")
+  .option("--json", "Emit machine-readable JSON")
+  .action(async function action() {
+    await runExportStorageState(this);
   });
 
 program

@@ -60,3 +60,9 @@ These settings apply only to Playwright-launched sessions. They are ignored for 
 ### Release validation
 
 Use the release workflow or `npm run build:release` in headless mode with a stored authenticated session. That removes visible browser churn entirely while preserving the same DOM checks.
+
+The intended refresh path for that headless session is now:
+
+1. keep one trusted headed browser session open over CDP for local auth and recovery
+2. export storage state from that live session with `export-storage-state`
+3. use the exported storage state for headless release validation
