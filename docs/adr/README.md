@@ -24,3 +24,4 @@ Current ADRs:
 - [0010 Bounded Source Snapshots Cannot Authorize Delete](/Users/malpern/local-code/youtube-cli/docs/adr/0010-bounded-source-snapshots-cannot-authorize-delete.md)
 - [0011 Versioned Verification Artifacts](/Users/malpern/local-code/youtube-cli/docs/adr/0011-versioned-verification-artifacts.md)
 - [0012 Auth Loss Pauses Runs And Mutations Are Throttled](/Users/malpern/local-code/youtube-cli/docs/adr/0012-auth-loss-pauses-runs-and-mutations-are-throttled.md)
+- [0013 CLI Native App Seam Stays Process Based](/Users/malpern/local-code/youtube-cli/docs/adr/0013-cli-native-app-seam-stays-process-based.md)
