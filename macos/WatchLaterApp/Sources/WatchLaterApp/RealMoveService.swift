@@ -72,7 +72,8 @@ struct RealMoveService: MoveService {
                     return
                 }
 
-                continuation.finish(throwing: CLIProcessError(description: stderrText.isEmpty ? "Move failed." : stderrText))
+                let humanMessage = Self.extractHumanReadableError(from: stderrText)
+                continuation.finish(throwing: CLIProcessError(description: humanMessage))
             }
 
             continuation.onTermination = { @Sendable _ in
@@ -206,6 +207,16 @@ struct RealMoveService: MoveService {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+
+    private nonisolated static func extractHumanReadableError(from stderr: String) -> String {
+        let lines = stderr.components(separatedBy: .newlines)
+        let humanLines = lines.filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && !trimmed.hasPrefix("{")
+        }
+        let message = humanLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? "Move failed." : message
     }
 }
 
