@@ -8,11 +8,11 @@ struct ExistingPlaylistPickerView: View {
     }
 
     private var showsUnavailableView: Bool {
-        realPlaylists.isEmpty && !model.isLoadingPlaylists
+        realPlaylists.isEmpty && model.hasLoadedPlaylists && !model.isLoadingPlaylists
     }
 
     private var showsLoadingSpinner: Bool {
-        realPlaylists.isEmpty && model.isLoadingPlaylists
+        realPlaylists.isEmpty && !model.hasLoadedPlaylists
     }
 
     var body: some View {
