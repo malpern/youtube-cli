@@ -5,7 +5,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { InventoryItem } from "../models/types.js";
-import { assertUsableSourceSnapshot, computeInventoryFingerprint, readSourceSnapshot, resolveSourceSnapshotPath } from "./sourceSnapshot.js";
+import {
+  ambiguousSourceItemMismatches,
+  assessSourceItemPolicy,
+  assertUsableSourceSnapshot,
+  computeInventoryFingerprint,
+  partitionSourceItems,
+  readSourceSnapshot,
+  resolveSourceSnapshotPath,
+  selectSourceItems
+} from "./sourceSnapshot.js";
 
 const tempDirs: string[] = [];
 
@@ -213,5 +222,86 @@ describe("resolveSourceSnapshotPath", () => {
     const rootDir = makeTempRoot();
 
     expect(() => resolveSourceSnapshotPath(rootDir, "current-run", "missing-run")).toThrow(/Source snapshot not found/);
+  });
+});
+
+describe("selectSourceItems", () => {
+  it("returns all items from the start index onward", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2), makeItem(3)], { startIndex: 2 })).toEqual([makeItem(2), makeItem(3)]);
+  });
+
+  it("applies max-items after start-index filtering", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2), makeItem(3), makeItem(4)], { startIndex: 2, maxItems: 2 })).toEqual([
+      makeItem(2),
+      makeItem(3)
+    ]);
+  });
+
+  it("defaults to the full item list when no bounds are provided", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2)], {})).toEqual([makeItem(1), makeItem(2)]);
+  });
+});
+
+describe("assessSourceItemPolicy", () => {
+  it("marks normal rows as copyable", () => {
+    expect(assessSourceItemPolicy(makeItem(1))).toEqual({
+      policy: "copyable",
+      reason: "has-copyable-video-url"
+    });
+  });
+
+  it("marks private/deleted/unavailable rows as expected non-copyable", () => {
+    expect(assessSourceItemPolicy(makeItem(1, { unavailableKind: "private", videoUrl: null, videoId: null }))).toEqual({
+      policy: "expected-non-copyable",
+      reason: "private"
+    });
+
+    expect(assessSourceItemPolicy(makeItem(2, { unavailableKind: "deleted", videoUrl: null, videoId: null }))).toEqual({
+      policy: "expected-non-copyable",
+      reason: "deleted"
+    });
+  });
+
+  it("marks unknown or missing-url rows as ambiguous", () => {
+    expect(assessSourceItemPolicy(makeItem(1, { unavailableKind: "unknown", videoUrl: null, videoId: null }))).toEqual({
+      policy: "ambiguous-unavailable",
+      reason: "unknown-unavailable-state"
+    });
+
+    expect(assessSourceItemPolicy(makeItem(2, { unavailableKind: "none", videoUrl: null }))).toEqual({
+      policy: "ambiguous-unavailable",
+      reason: "missing-video-url"
+    });
+  });
+});
+
+describe("partitionSourceItems", () => {
+  it("splits source items by policy", () => {
+    const partitioned = partitionSourceItems([
+      makeItem(1),
+      makeItem(2, { unavailableKind: "private", videoUrl: null, videoId: null }),
+      makeItem(3, { unavailableKind: "unknown", videoUrl: null, videoId: null })
+    ]);
+
+    expect(partitioned.copyableItems.map((item) => item.sourceIndex)).toEqual([1]);
+    expect(partitioned.expectedNonCopyableItems.map((item) => item.sourceIndex)).toEqual([2]);
+    expect(partitioned.ambiguousItems.map((item) => item.sourceIndex)).toEqual([3]);
+  });
+});
+
+describe("ambiguousSourceItemMismatches", () => {
+  it("turns ambiguous items into verification mismatches", () => {
+    expect(
+      ambiguousSourceItemMismatches([
+        makeItem(7, { title: null, videoId: null, videoUrl: null, unavailableKind: "unknown" })
+      ])
+    ).toEqual([
+      {
+        sourceIndex: 7,
+        field: "ambiguous-source-item",
+        expected: "unknown",
+        actual: null
+      }
+    ]);
   });
 });

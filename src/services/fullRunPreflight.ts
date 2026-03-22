@@ -1,5 +1,5 @@
 import type { CopyPerformanceReport, FullRunPreflightReport, NumericStats, SourceSnapshot } from "../models/types.js";
-import { partitionSourceItems } from "./sourceItemPolicy.js";
+import { partitionSourceItems } from "./sourceSnapshot.js";
 
 function round(value: number): number {
   return Number(value.toFixed(2));

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { InventoryFingerprint, InventoryItem, SourceSnapshot } from "../models/types.js";
+import type { InventoryFingerprint, InventoryItem, SourceItemPolicy, SourceSnapshot, VerificationMismatch } from "../models/types.js";
 
 function identifierForItem(item: InventoryItem): string {
   return item.videoId ?? item.videoUrl ?? item.title ?? `unavailable:${item.unavailableKind}:${item.sourceIndex}`;
@@ -105,4 +105,81 @@ export function resolveSourceSnapshotPath(rootDir: string, currentRunId: string,
   }
 
   return latest.snapshotPath;
+}
+
+// --- Source Selection ---
+
+export function selectSourceItems(items: InventoryItem[], args: { startIndex?: number; maxItems?: number }): InventoryItem[] {
+  const startIndex = args.startIndex ?? 1;
+  const filtered = items.filter((item) => item.sourceIndex >= startIndex);
+
+  if (typeof args.maxItems === "number") {
+    return filtered.slice(0, args.maxItems);
+  }
+
+  return filtered;
+}
+
+// --- Source Item Policy ---
+
+export interface SourceItemPolicyAssessment {
+  policy: SourceItemPolicy;
+  reason: string;
+}
+
+export function assessSourceItemPolicy(item: InventoryItem): SourceItemPolicyAssessment {
+  if (item.unavailableKind === "private" || item.unavailableKind === "deleted" || item.unavailableKind === "unavailable") {
+    return {
+      policy: "expected-non-copyable",
+      reason: item.unavailableKind
+    };
+  }
+
+  if (!item.videoUrl || item.unavailableKind === "unknown") {
+    return {
+      policy: "ambiguous-unavailable",
+      reason: item.unavailableKind === "unknown" ? "unknown-unavailable-state" : "missing-video-url"
+    };
+  }
+
+  return {
+    policy: "copyable",
+    reason: "has-copyable-video-url"
+  };
+}
+
+export function partitionSourceItems(items: InventoryItem[]): {
+  copyableItems: InventoryItem[];
+  expectedNonCopyableItems: InventoryItem[];
+  ambiguousItems: InventoryItem[];
+} {
+  const copyableItems: InventoryItem[] = [];
+  const expectedNonCopyableItems: InventoryItem[] = [];
+  const ambiguousItems: InventoryItem[] = [];
+
+  for (const item of items) {
+    const assessment = assessSourceItemPolicy(item);
+    if (assessment.policy === "copyable") {
+      copyableItems.push(item);
+    } else if (assessment.policy === "expected-non-copyable") {
+      expectedNonCopyableItems.push(item);
+    } else {
+      ambiguousItems.push(item);
+    }
+  }
+
+  return {
+    copyableItems,
+    expectedNonCopyableItems,
+    ambiguousItems
+  };
+}
+
+export function ambiguousSourceItemMismatches(items: InventoryItem[]): VerificationMismatch[] {
+  return items.map((item) => ({
+    sourceIndex: item.sourceIndex,
+    field: "ambiguous-source-item",
+    expected: item.videoId ?? item.title ?? item.unavailableKind,
+    actual: null
+  }));
 }

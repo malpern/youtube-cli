@@ -11,27 +11,13 @@ import type { InventoryItem } from "../models/types.js";
 import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
 import { pauseRunForAuthentication } from "../services/authPause.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
-import { computeMutationPacingDelay, resolveMutationPacingPolicy } from "../services/mutationPacing.js";
-import { resolveMutationRetryPolicy, runWithRetries } from "../services/mutationRetry.js";
-import { readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourceSnapshot.js";
-import { assessSourceItemPolicy } from "../services/sourceItemPolicy.js";
+import { computeMutationPacingDelay, resolveMutationPacingPolicy, resolveMutationRetryPolicy, runWithRetries } from "../services/mutation.js";
+import { readSourceSnapshot, resolveSourceSnapshotPath, assessSourceItemPolicy } from "../services/sourceSnapshot.js";
 import { planRepair } from "../services/repairPlanner.js";
 import { planRepairResume } from "../services/resumePlanner.js";
 import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
-import { readVerificationReport, resolveVerificationReportPath } from "../services/verificationReport.js";
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.floor(parsed);
-}
+import { readVerificationReport, resolveVerificationReportPath } from "../services/verification.js";
+import { parsePositiveInt } from "../utils/cli.js";
 
 function appendRepairOperation(
   operationsPath: string,

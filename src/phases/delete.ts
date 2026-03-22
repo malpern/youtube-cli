@@ -10,25 +10,12 @@ import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIf
 import { pauseRunForAuthentication } from "../services/authPause.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
 import { evaluateDeleteReadiness } from "../services/deleteGate.js";
-import { computeMutationPacingDelay, resolveMutationPacingPolicy } from "../services/mutationPacing.js";
-import { resolveMutationRetryPolicy, runWithRetries } from "../services/mutationRetry.js";
+import { computeMutationPacingDelay, resolveMutationPacingPolicy, resolveMutationRetryPolicy, runWithRetries } from "../services/mutation.js";
 import { planDeleteResume } from "../services/resumePlanner.js";
 import { readSourceSnapshot } from "../services/sourceSnapshot.js";
 import { writeRunSummary } from "../services/summaryWriter.js";
-import { readVerificationReport, resolveVerificationReportPath } from "../services/verificationReport.js";
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.floor(parsed);
-}
+import { readVerificationReport, resolveVerificationReportPath } from "../services/verification.js";
+import { parsePositiveInt } from "../utils/cli.js";
 
 function appendDeleteOperation(
   operationsPath: string,

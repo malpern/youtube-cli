@@ -1,4 +1,4 @@
-import type { VerificationReport } from "./verificationReport.js";
+import type { VerificationReport } from "./verification.js";
 
 export interface DeleteGateDecision {
   allowed: boolean;

@@ -482,16 +482,8 @@ final class TransferViewModel {
             return
         }
 
-        currentPhase = nil
-        currentItem = nil
-        completedItems = []
-        latestResult = nil
+        resetRunState()
         hasStartedTransfer = false
-        copyProgress = PhaseProgressSnapshot(phase: .copy)
-        verifyProgress = PhaseProgressSnapshot(phase: .verify)
-        deleteProgress = PhaseProgressSnapshot(phase: .delete)
-        isProgressExpanded = false
-        isEditingDestination = false
         statusMessage = "Choose a destination, then start the migration."
     }
 

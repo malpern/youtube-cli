@@ -7,24 +7,10 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { loadPlaylistInventory, loadWatchLaterInventory, type InventoryOptions } from "../browser/youtube/inventory.js";
 import { resolvePlaylistFeedSummary, resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
-import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, computeInventoryFingerprint } from "../services/sourceSnapshot.js";
-import { ambiguousSourceItemMismatches, partitionSourceItems } from "../services/sourceItemPolicy.js";
-import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts, findMatchingWindowStart } from "../services/verification.js";
-import { buildProductionDeleteAuthorization, evaluateDeletionEligibility } from "../services/verificationGate.js";
+import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, computeInventoryFingerprint, ambiguousSourceItemMismatches, partitionSourceItems } from "../services/sourceSnapshot.js";
+import { analyzeInventoryDiscrepancies, buildProductionDeleteAuthorization, compareOrderedPrefix, discrepanciesAreClear, evaluateDeletionEligibility, evaluateVerificationCounts, findMatchingWindowStart } from "../services/verification.js";
 import { getTargetPlaylistRequest } from "../services/targetPlaylist.js";
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.floor(parsed);
-}
+import { parsePositiveInt } from "../utils/cli.js";
 
 export async function runVerify(command: Command): Promise<void> {
   const ctx = createRunContext(command, "verify");

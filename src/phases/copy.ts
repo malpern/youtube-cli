@@ -11,26 +11,11 @@ import type { InventoryItem } from "../models/types.js";
 import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
 import { pauseRunForAuthentication } from "../services/authPause.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
-import { computeMutationPacingDelay, resolveMutationPacingPolicy } from "../services/mutationPacing.js";
-import { resolveMutationRetryPolicy, runWithRetries } from "../services/mutationRetry.js";
+import { computeMutationPacingDelay, resolveMutationPacingPolicy, resolveMutationRetryPolicy, runWithRetries } from "../services/mutation.js";
 import { planCopyResume } from "../services/resumePlanner.js";
-import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourceSnapshot.js";
-import { selectSourceItems } from "../services/sourceSelection.js";
-import { assessSourceItemPolicy, partitionSourceItems } from "../services/sourceItemPolicy.js";
+import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, selectSourceItems, assessSourceItemPolicy, partitionSourceItems } from "../services/sourceSnapshot.js";
 import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.floor(parsed);
-}
+import { parsePositiveInt } from "../utils/cli.js";
 
 function formatRate(processedCount: number, startedAtMs: number): number {
   const elapsedSeconds = Math.max((Date.now() - startedAtMs) / 1000, 1);

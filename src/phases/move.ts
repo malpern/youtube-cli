@@ -8,24 +8,7 @@ import { createRunContext } from "../app/runContext.js";
 import { buildMoveAppPayload } from "../services/appContracts.js";
 import { writeRunSummary } from "../services/summaryWriter.js";
 import { appendTargetPlaylistArgs, getTargetPlaylistRequest } from "../services/targetPlaylist.js";
-
-interface GlobalOptions {
-  config?: string;
-  profileDir?: string;
-  storageState?: string;
-  expectedAccount?: string;
-  browserChannel?: string;
-  browserExecutablePath?: string;
-  browserCdpUrl?: string;
-  browserWindowWidth?: string;
-  browserWindowHeight?: string;
-  browserWindowPositionX?: string;
-  browserWindowPositionY?: string;
-  browserViewportWidth?: string;
-  browserViewportHeight?: string;
-  headless?: boolean;
-  slowMoMs?: string;
-}
+import { type GlobalOptions, buildGlobalArgs, appendOptionalArg, parsePositiveInt } from "../utils/cli.js";
 
 interface MoveOptions extends GlobalOptions {
   json?: boolean;
@@ -60,48 +43,8 @@ function getMoveOptions(command: Command): MoveOptions {
   return (commandLike.optsWithGlobals ? commandLike.optsWithGlobals() : command.opts()) as MoveOptions;
 }
 
-function buildGlobalArgs(options: GlobalOptions): string[] {
-  const args: string[] = [];
-
-  appendOptionalArg(args, "--config", options.config);
-  appendOptionalArg(args, "--profile-dir", options.profileDir);
-  appendOptionalArg(args, "--storage-state", options.storageState);
-  appendOptionalArg(args, "--expected-account", options.expectedAccount);
-  appendOptionalArg(args, "--browser-channel", options.browserChannel);
-  appendOptionalArg(args, "--browser-executable-path", options.browserExecutablePath);
-  appendOptionalArg(args, "--browser-cdp-url", options.browserCdpUrl);
-  appendOptionalArg(args, "--browser-window-width", options.browserWindowWidth);
-  appendOptionalArg(args, "--browser-window-height", options.browserWindowHeight);
-  appendOptionalArg(args, "--browser-window-position-x", options.browserWindowPositionX);
-  appendOptionalArg(args, "--browser-window-position-y", options.browserWindowPositionY);
-  appendOptionalArg(args, "--browser-viewport-width", options.browserViewportWidth);
-  appendOptionalArg(args, "--browser-viewport-height", options.browserViewportHeight);
-  appendOptionalArg(args, "--slow-mo-ms", options.slowMoMs);
-
-  if (options.headless) {
-    args.push("--headless");
-  }
-
-  return args;
-}
-
-function appendOptionalArg(args: string[], flag: string, value: string | undefined): void {
-  if (value && value.trim().length > 0) {
-    args.push(flag, value);
-  }
-}
-
-function parsePositiveInt(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return null;
-  }
-
-  return Math.floor(parsed);
+function parseDevelopmentMaxItems(value: string | undefined): number | null {
+  return value ? parsePositiveInt(value, 0) || null : null;
 }
 
 function thumbnailUrlForVideoId(videoId: string | null | undefined): string | null {
@@ -427,7 +370,7 @@ export async function runMove(command: Command): Promise<void> {
   const verifyRunId = `${workflowRunId}-verify`;
   const deleteRunId = `${ctx.runId}-delete`;
   const globalArgs = buildGlobalArgs(options);
-  const developmentMaxItems = parsePositiveInt(options.developmentMaxItems);
+  const developmentMaxItems = parseDevelopmentMaxItems(options.developmentMaxItems);
   const skipDelete = developmentMaxItems !== null;
 
   if (options.maxItems) {

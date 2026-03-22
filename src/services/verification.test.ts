@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { InventoryItem } from "../models/types.js";
-import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts, findMatchingWindowStart } from "./verification.js";
+import {
+  analyzeInventoryDiscrepancies,
+  buildProductionDeleteAuthorization,
+  compareOrderedPrefix,
+  discrepanciesAreClear,
+  evaluateDeletionEligibility,
+  evaluateVerificationCounts,
+  findMatchingWindowStart,
+  readVerificationReport
+} from "./verification.js";
 
 function makeItem(sourceIndex: number, overrides: Partial<InventoryItem> = {}): InventoryItem {
   return {
@@ -234,5 +247,360 @@ describe("discrepanciesAreClear", () => {
         orderMismatches: []
       })
     ).toBe(false);
+  });
+});
+
+// --- Verification Gate ---
+
+describe("evaluateDeletionEligibility", () => {
+  it("allows deletion only for a full clean verification", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: true,
+        targetPassed: true,
+        driftPassed: true,
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: false,
+        expectedNonCopyableCount: 0,
+        ambiguousSourceCount: 0,
+        targetCountMatches: true,
+        driftCountMatches: true,
+        targetDiscrepanciesClear: true,
+        driftDiscrepanciesClear: true,
+        sourceSnapshotRunId: "snapshot-a"
+      })
+    ).toEqual({
+      eligible: true,
+      reasons: []
+    });
+  });
+
+  it("blocks deletion for subset-only verification", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: true,
+        targetPassed: true,
+        driftPassed: true,
+        subsetLimit: 10,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: false,
+        expectedNonCopyableCount: 0,
+        ambiguousSourceCount: 0,
+        targetCountMatches: true,
+        driftCountMatches: true,
+        targetDiscrepanciesClear: true,
+        driftDiscrepanciesClear: true,
+        sourceSnapshotRunId: "snapshot-a"
+      })
+    ).toEqual({
+      eligible: false,
+      reasons: ["verification-was-subset-only"]
+    });
+  });
+
+  it("accumulates multiple blocking reasons", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: false,
+        targetPassed: false,
+        driftPassed: false,
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: false,
+        sourceSnapshotBounded: false,
+        expectedNonCopyableCount: 1,
+        ambiguousSourceCount: 2,
+        targetCountMatches: false,
+        driftCountMatches: false,
+        targetDiscrepanciesClear: false,
+        driftDiscrepanciesClear: false,
+        sourceSnapshotRunId: null
+      })
+    ).toEqual({
+      eligible: false,
+      reasons: [
+        "missing-source-snapshot",
+        "source-snapshot-metadata-incomplete",
+        "verification-did-not-pass",
+        "target-verification-failed",
+        "source-drift-verification-failed",
+        "ambiguous-source-items-present",
+        "expected-non-copyable-source-items-present",
+        "target-count-mismatch",
+        "source-drift-count-mismatch",
+        "target-discrepancies-present",
+        "source-drift-discrepancies-present"
+      ]
+    });
+  });
+
+  it("blocks deletion when expected non-copyable source items are present", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: true,
+        targetPassed: true,
+        driftPassed: true,
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: false,
+        expectedNonCopyableCount: 1,
+        ambiguousSourceCount: 0,
+        targetCountMatches: true,
+        driftCountMatches: true,
+        targetDiscrepanciesClear: true,
+        driftDiscrepanciesClear: true,
+        sourceSnapshotRunId: "snapshot-a"
+      })
+    ).toEqual({
+      eligible: false,
+      reasons: ["expected-non-copyable-source-items-present"]
+    });
+  });
+
+  it("blocks deletion when the source snapshot was bounded", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: true,
+        targetPassed: true,
+        driftPassed: true,
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: true,
+        expectedNonCopyableCount: 0,
+        ambiguousSourceCount: 0,
+        targetCountMatches: true,
+        driftCountMatches: true,
+        targetDiscrepanciesClear: true,
+        driftDiscrepanciesClear: true,
+        sourceSnapshotRunId: "snapshot-a"
+      })
+    ).toEqual({
+      eligible: false,
+      reasons: ["source-snapshot-was-bounded"]
+    });
+  });
+
+  it("blocks deletion when source snapshot metadata is incomplete", () => {
+    expect(
+      evaluateDeletionEligibility({
+        passed: true,
+        targetPassed: true,
+        driftPassed: true,
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: false,
+        sourceSnapshotBounded: false,
+        expectedNonCopyableCount: 0,
+        ambiguousSourceCount: 0,
+        targetCountMatches: true,
+        driftCountMatches: true,
+        targetDiscrepanciesClear: true,
+        driftDiscrepanciesClear: true,
+        sourceSnapshotRunId: "snapshot-a"
+      })
+    ).toEqual({
+      eligible: false,
+      reasons: ["source-snapshot-metadata-incomplete"]
+    });
+  });
+});
+
+describe("buildProductionDeleteAuthorization", () => {
+  it("records a full authorized verification explicitly", () => {
+    expect(
+      buildProductionDeleteAuthorization({
+        verificationRunId: "verify-a",
+        sourceSnapshotRunId: "snapshot-a",
+        targetPlaylist: "Old Watch",
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: false,
+        eligibility: {
+          eligible: true,
+          reasons: []
+        },
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      })
+    ).toEqual({
+      authorized: true,
+      reasons: [],
+      verificationRunId: "verify-a",
+      sourceSnapshotRunId: "snapshot-a",
+      targetPlaylist: "Old Watch",
+      verificationMode: "full",
+      verifiedAt: "2026-03-21T00:00:00.000Z"
+    });
+  });
+
+  it("records subset verification as non-authorizing context", () => {
+    expect(
+      buildProductionDeleteAuthorization({
+        verificationRunId: "verify-b",
+        sourceSnapshotRunId: "snapshot-b",
+        targetPlaylist: "Old Watch",
+        subsetLimit: 10,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: false,
+        eligibility: {
+          eligible: false,
+          reasons: ["verification-was-subset-only"]
+        },
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      })
+    ).toEqual({
+      authorized: false,
+      reasons: ["verification-was-subset-only"],
+      verificationRunId: "verify-b",
+      sourceSnapshotRunId: "snapshot-b",
+      targetPlaylist: "Old Watch",
+      verificationMode: "subset",
+      verifiedAt: "2026-03-21T00:00:00.000Z"
+    });
+  });
+
+  it("records bounded snapshots as subset-mode authorization context", () => {
+    expect(
+      buildProductionDeleteAuthorization({
+        verificationRunId: "verify-c",
+        sourceSnapshotRunId: "snapshot-c",
+        targetPlaylist: "Old Watch",
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: true,
+        sourceSnapshotBounded: true,
+        eligibility: {
+          eligible: false,
+          reasons: ["source-snapshot-was-bounded"]
+        },
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      })
+    ).toEqual({
+      authorized: false,
+      reasons: ["source-snapshot-was-bounded"],
+      verificationRunId: "verify-c",
+      sourceSnapshotRunId: "snapshot-c",
+      targetPlaylist: "Old Watch",
+      verificationMode: "subset",
+      verifiedAt: "2026-03-21T00:00:00.000Z"
+    });
+  });
+
+  it("records incomplete snapshot metadata as subset authorization context", () => {
+    expect(
+      buildProductionDeleteAuthorization({
+        verificationRunId: "verify-d",
+        sourceSnapshotRunId: "snapshot-d",
+        targetPlaylist: "Old Watch",
+        subsetLimit: null,
+        sourceSnapshotMetadataComplete: false,
+        sourceSnapshotBounded: false,
+        eligibility: {
+          eligible: false,
+          reasons: ["source-snapshot-metadata-incomplete"]
+        },
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      })
+    ).toEqual({
+      authorized: false,
+      reasons: ["source-snapshot-metadata-incomplete"],
+      verificationRunId: "verify-d",
+      sourceSnapshotRunId: "snapshot-d",
+      targetPlaylist: "Old Watch",
+      verificationMode: "subset",
+      verifiedAt: "2026-03-21T00:00:00.000Z"
+    });
+  });
+});
+
+// --- Verification Report ---
+
+const tempDirs: string[] = [];
+
+function makeTempDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "verification-report-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeReport(value: unknown): string {
+  const dir = makeTempDir();
+  const reportPath = path.join(dir, "verification.json");
+  fs.writeFileSync(reportPath, `${JSON.stringify(value, null, 2)}\n`);
+  return reportPath;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+describe("readVerificationReport", () => {
+  it("accepts the current verification report shape", () => {
+    const reportPath = writeReport({
+      reportVersion: 1,
+      reportComplete: true,
+      sourceSnapshotRunId: "snapshot-a",
+      sourceSnapshotPath: "/tmp/inventory.json",
+      targetPlaylist: "Old Watch",
+      passed: true,
+      targetPassed: true,
+      driftPassed: true,
+      ambiguousSourceCount: 0,
+      targetMismatches: [],
+      productionDeleteAuthorization: {
+        authorized: true,
+        reasons: [],
+        verificationRunId: "verify-a",
+        sourceSnapshotRunId: "snapshot-a",
+        targetPlaylist: "Old Watch",
+        verificationMode: "full",
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      }
+    });
+
+    expect(readVerificationReport(reportPath).reportVersion).toBe(1);
+  });
+
+  it("fails closed on legacy reports without version metadata", () => {
+    const reportPath = writeReport({
+      sourceSnapshotRunId: "snapshot-a",
+      sourceSnapshotPath: "/tmp/inventory.json",
+      targetPlaylist: "Old Watch",
+      passed: true,
+      targetPassed: true,
+      driftPassed: true,
+      ambiguousSourceCount: 0,
+      targetMismatches: [],
+      productionDeleteAuthorization: {
+        authorized: false,
+        reasons: ["verification-was-subset-only"],
+        verificationRunId: "verify-a",
+        sourceSnapshotRunId: "snapshot-a",
+        targetPlaylist: "Old Watch",
+        verificationMode: "subset",
+        verifiedAt: "2026-03-21T00:00:00.000Z"
+      }
+    });
+
+    expect(() => readVerificationReport(reportPath)).toThrow(/unsupported or incomplete/i);
+  });
+
+  it("fails closed when authorization metadata is missing", () => {
+    const reportPath = writeReport({
+      reportVersion: 1,
+      reportComplete: true,
+      sourceSnapshotRunId: "snapshot-a",
+      sourceSnapshotPath: "/tmp/inventory.json",
+      targetPlaylist: "Old Watch",
+      passed: true,
+      targetPassed: true,
+      driftPassed: true,
+      ambiguousSourceCount: 0,
+      targetMismatches: []
+    });
+
+    expect(() => readVerificationReport(reportPath)).toThrow(/missing production delete authorization/i);
   });
 });

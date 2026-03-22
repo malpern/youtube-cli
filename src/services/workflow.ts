@@ -3,7 +3,9 @@ import path from "node:path";
 
 import type { CheckpointRecord, InventoryFingerprint } from "../models/types.js";
 import { readCheckpointFile } from "./checkpointFile.js";
-import { readVerificationReport } from "./verificationReport.js";
+import { readVerificationReport } from "./verification.js";
+
+// --- Child Summaries ---
 
 interface InventoryArtifact {
   capturedAt?: string;
@@ -162,4 +164,38 @@ function readVerifySummary(verificationPath: string, runId: string): WorkflowChi
 function readNumericCheckpointField(checkpoint: CheckpointRecord, key: string): number | null {
   const value = checkpoint.payload[key];
   return typeof value === "number" ? value : null;
+}
+
+// --- Production Readiness ---
+
+export interface WorkflowProductionReadiness {
+  readyForProductionDeleteAuthorization: boolean;
+  blockingReasons: string[];
+}
+
+export function evaluateWorkflowProductionReadiness(childSummaries: WorkflowChildSummaries): WorkflowProductionReadiness {
+  const reasons = new Set<string>();
+
+  if (!childSummaries.verify) {
+    reasons.add("missing-verify-summary");
+  } else {
+    if (childSummaries.verify.deletionEligible !== true) {
+      for (const reason of childSummaries.verify.deletionBlockedBy ?? ["verification-not-production-authorized"]) {
+        reasons.add(reason);
+      }
+    }
+
+    if (childSummaries.verify.verificationMode !== "full") {
+      reasons.add("verification-mode-not-full");
+    }
+  }
+
+  if (childSummaries.inventory?.bounded) {
+    reasons.add("source-snapshot-was-bounded");
+  }
+
+  return {
+    readyForProductionDeleteAuthorization: reasons.size === 0,
+    blockingReasons: [...reasons]
+  };
 }

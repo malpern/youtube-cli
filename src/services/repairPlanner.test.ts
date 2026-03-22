@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { InventoryItem } from "../models/types.js";
 import { planRepair } from "./repairPlanner.js";
-import type { VerificationReport } from "./verificationReport.js";
+import type { VerificationReport } from "./verification.js";
 
 function makeItem(sourceIndex: number, overrides: Partial<InventoryItem> = {}): InventoryItem {
   return {

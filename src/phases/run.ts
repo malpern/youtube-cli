@@ -7,27 +7,9 @@ import { createRunContext } from "../app/runContext.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
 import { writeRunSummary } from "../services/summaryWriter.js";
 import { appendTargetPlaylistArgs, getTargetPlaylistRequest } from "../services/targetPlaylist.js";
-import { readVerificationReport } from "../services/verificationReport.js";
-import { evaluateWorkflowProductionReadiness } from "../services/workflowReadiness.js";
-import { readWorkflowChildSummaries } from "../services/workflowSummary.js";
-
-interface GlobalOptions {
-  config?: string;
-  profileDir?: string;
-  storageState?: string;
-  expectedAccount?: string;
-  browserChannel?: string;
-  browserExecutablePath?: string;
-  browserCdpUrl?: string;
-  browserWindowWidth?: string;
-  browserWindowHeight?: string;
-  browserWindowPositionX?: string;
-  browserWindowPositionY?: string;
-  browserViewportWidth?: string;
-  browserViewportHeight?: string;
-  headless?: boolean;
-  slowMoMs?: string;
-}
+import { readVerificationReport } from "../services/verification.js";
+import { evaluateWorkflowProductionReadiness, readWorkflowChildSummaries } from "../services/workflow.js";
+import { type GlobalOptions, buildGlobalArgs, appendOptionalArg } from "../utils/cli.js";
 
 interface RunWorkflowOptions extends GlobalOptions {
   targetPlaylist?: string;
@@ -51,37 +33,6 @@ function getRunOptions(command: Command): RunWorkflowOptions {
   };
 
   return (commandLike.optsWithGlobals ? commandLike.optsWithGlobals() : command.opts()) as RunWorkflowOptions;
-}
-
-function buildGlobalArgs(options: GlobalOptions): string[] {
-  const args: string[] = [];
-
-  appendOptionalArg(args, "--config", options.config);
-  appendOptionalArg(args, "--profile-dir", options.profileDir);
-  appendOptionalArg(args, "--storage-state", options.storageState);
-  appendOptionalArg(args, "--expected-account", options.expectedAccount);
-  appendOptionalArg(args, "--browser-channel", options.browserChannel);
-  appendOptionalArg(args, "--browser-executable-path", options.browserExecutablePath);
-  appendOptionalArg(args, "--browser-cdp-url", options.browserCdpUrl);
-  appendOptionalArg(args, "--browser-window-width", options.browserWindowWidth);
-  appendOptionalArg(args, "--browser-window-height", options.browserWindowHeight);
-  appendOptionalArg(args, "--browser-window-position-x", options.browserWindowPositionX);
-  appendOptionalArg(args, "--browser-window-position-y", options.browserWindowPositionY);
-  appendOptionalArg(args, "--browser-viewport-width", options.browserViewportWidth);
-  appendOptionalArg(args, "--browser-viewport-height", options.browserViewportHeight);
-  appendOptionalArg(args, "--slow-mo-ms", options.slowMoMs);
-
-  if (options.headless) {
-    args.push("--headless");
-  }
-
-  return args;
-}
-
-function appendOptionalArg(args: string[], flag: string, value: string | undefined): void {
-  if (value && value.trim().length > 0) {
-    args.push(flag, value);
-  }
 }
 
 function runChildPhase(args: {
