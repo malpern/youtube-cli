@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Command } from "commander";
 
 import { createRunContext } from "../app/runContext.js";
+import { buildMoveAppPayload } from "../services/appContracts.js";
 import { writeRunSummary } from "../services/summaryWriter.js";
 import { appendTargetPlaylistArgs, getTargetPlaylistRequest } from "../services/targetPlaylist.js";
 
@@ -43,11 +44,11 @@ interface MoveOptions extends GlobalOptions {
   maxItems?: string;
 }
 
-function writeJson(payload: Record<string, unknown>): void {
+function writeJson(payload: object): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
-function writeJsonLine(payload: Record<string, unknown>): void {
+function writeJsonLine(payload: object): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
@@ -191,10 +192,7 @@ function createMoveStreamEmitter(enabled: boolean, runId: string): MoveStreamEmi
       return;
     }
 
-    writeJsonLine({
-      runId,
-      ...payload
-    });
+    writeJsonLine(buildMoveAppPayload(runId, payload));
   };
 
   return {
@@ -436,11 +434,10 @@ export async function runMove(command: Command): Promise<void> {
     const message = "The move command does not support --max-items because deletion requires full verification of the source snapshot.";
 
     if (json) {
-      writeJson({
+      writeJson(buildMoveAppPayload(ctx.runId, {
         ok: false,
-        runId: ctx.runId,
         error: message
-      });
+      }));
       process.exitCode = 1;
       return;
     }

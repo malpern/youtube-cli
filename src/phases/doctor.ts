@@ -6,13 +6,14 @@ import { captureAccountSnapshot, accountMatches } from "../browser/accountCheck.
 import { launchBrowserSession } from "../browser/launch.js";
 import { createRunContext } from "../app/runContext.js";
 import type { DoctorCheck } from "../models/types.js";
+import { buildDoctorAppPayload } from "../services/appContracts.js";
 import { resolveBrowserWindowSettings } from "../services/browserWindowSettings.js";
 
 interface DoctorOptions {
   json?: boolean;
 }
 
-function writeJson(payload: Record<string, unknown>): void {
+function writeJson(payload: object): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
@@ -121,11 +122,11 @@ export async function runDoctor(command: Command): Promise<void> {
   ctx.db.upsertRunState("doctor", failedChecks.length > 0 ? "failed" : "complete");
 
   if (json) {
-    writeJson({
+    writeJson(buildDoctorAppPayload({
       ok: failedChecks.length === 0,
       runId: ctx.runId,
       checks
-    });
+    }));
   }
 
   if (failedChecks.length > 0 && ctx.config.stopOnAccountMismatch) {

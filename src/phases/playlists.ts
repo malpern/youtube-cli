@@ -8,6 +8,7 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { listPlaylistFeedSummaries } from "../browser/youtube/playlistDiscovery.js";
 import { listVisiblePlaylistOptions, openSaveToPlaylistPanel } from "../browser/youtube/saveToPlaylist.js";
+import { buildPlaylistsAppPayload } from "../services/appContracts.js";
 import { buildPlaylistMetadataIndex, resolvePlaylistMetadata } from "../services/playlistMetadata.js";
 
 interface PlaylistsOptions {
@@ -22,7 +23,7 @@ interface WatchLaterCapacitySummary {
   atCapacity: boolean;
 }
 
-function writeJson(payload: Record<string, unknown>): void {
+function writeJson(payload: object): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
@@ -132,7 +133,7 @@ export async function runPlaylists(command: Command): Promise<void> {
     ctx.db.upsertRunState("playlists", "complete");
 
     if (json) {
-      writeJson(payload);
+      writeJson(buildPlaylistsAppPayload(payload));
       return;
     }
 
@@ -147,7 +148,7 @@ export async function runPlaylists(command: Command): Promise<void> {
     ctx.db.upsertRunState("playlists", "failed");
 
     if (json) {
-      writeJson({
+      writeJson(buildPlaylistsAppPayload({
         ok: false,
         runId: ctx.runId,
         error: message,
@@ -155,7 +156,7 @@ export async function runPlaylists(command: Command): Promise<void> {
           runDir: ctx.artifacts.runDir,
           screenshotPath
         }
-      });
+      }));
       process.exitCode = 1;
       return;
     }
