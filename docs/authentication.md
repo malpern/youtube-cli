@@ -53,6 +53,8 @@ open -na "Google Chrome" --args \
   https://www.youtube.com
 ```
 
+On macOS, put that dedicated browser window on its own Space if you want to keep headed automation out of the user’s main desktop. This is more reliable than trying to hide or minimize the automation window while the CLI is driving it.
+
 After the browser is open and signed in, attach the CLI with:
 
 ```bash
@@ -131,7 +133,7 @@ Action:
 
 1. Start Chrome manually on the dedicated profile with `--remote-debugging-port=9222`.
 2. Sign in once if needed.
-3. Keep that Chrome window open for the whole development session.
+3. Keep that Chrome window open for the whole development session, ideally on its own Space.
 4. Run all CLI commands with `--browser-cdp-url http://127.0.0.1:9222`.
 5. Do not run profile-owning commands in parallel.
 

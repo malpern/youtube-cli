@@ -30,6 +30,12 @@ program
   .option("--browser-channel <name>", "Playwright browser channel override, for example chrome")
   .option("--browser-executable-path <path>", "Browser executable path override")
   .option("--browser-cdp-url <url>", "Connect to an already running browser over CDP")
+  .option("--browser-window-width <px>", "Native browser window width for Playwright-launched headed sessions")
+  .option("--browser-window-height <px>", "Native browser window height for Playwright-launched headed sessions")
+  .option("--browser-window-position-x <px>", "Native browser window X position for Playwright-launched headed sessions")
+  .option("--browser-window-position-y <px>", "Native browser window Y position for Playwright-launched headed sessions")
+  .option("--browser-viewport-width <px>", "Browser viewport width for Playwright-launched sessions")
+  .option("--browser-viewport-height <px>", "Browser viewport height for Playwright-launched sessions")
   .option("--headless", "Launch browser headless")
   .option("--slow-mo-ms <ms>", "Playwright slowMo override in milliseconds");
 

@@ -16,6 +16,12 @@ interface GlobalOptions {
   browserChannel?: string;
   browserExecutablePath?: string;
   browserCdpUrl?: string;
+  browserWindowWidth?: string;
+  browserWindowHeight?: string;
+  browserWindowPositionX?: string;
+  browserWindowPositionY?: string;
+  browserViewportWidth?: string;
+  browserViewportHeight?: string;
   headless?: boolean;
   slowMoMs?: string;
 }
@@ -63,6 +69,12 @@ function buildGlobalArgs(options: GlobalOptions): string[] {
   appendOptionalArg(args, "--browser-channel", options.browserChannel);
   appendOptionalArg(args, "--browser-executable-path", options.browserExecutablePath);
   appendOptionalArg(args, "--browser-cdp-url", options.browserCdpUrl);
+  appendOptionalArg(args, "--browser-window-width", options.browserWindowWidth);
+  appendOptionalArg(args, "--browser-window-height", options.browserWindowHeight);
+  appendOptionalArg(args, "--browser-window-position-x", options.browserWindowPositionX);
+  appendOptionalArg(args, "--browser-window-position-y", options.browserWindowPositionY);
+  appendOptionalArg(args, "--browser-viewport-width", options.browserViewportWidth);
+  appendOptionalArg(args, "--browser-viewport-height", options.browserViewportHeight);
   appendOptionalArg(args, "--slow-mo-ms", options.slowMoMs);
 
   if (options.headless) {

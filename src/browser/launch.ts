@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 import type { RunConfig } from "../models/types.js";
+import { resolveBrowserWindowSettings } from "../services/browserWindowSettings.js";
 
 const AUTOMATION_WINDOW_NAME = "__youtube_watchlist_automation__";
 
@@ -31,15 +32,20 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
 
   const userDataDir = config.profileDir;
   const storageStatePath = config.storageStatePath;
+  const windowSettings = resolveBrowserWindowSettings(config);
   const launchOptions = {
     ...(config.browserChannel ? { channel: config.browserChannel } : {}),
     ...(config.browserExecutablePath ? { executablePath: config.browserExecutablePath } : {}),
+    ...(windowSettings.nativeWindowArgs.length > 0 ? { args: windowSettings.nativeWindowArgs } : {}),
     headless: config.headless,
     slowMo: config.slowMoMs
   };
 
   if (userDataDir) {
-    const context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      ...launchOptions,
+      ...(windowSettings.viewport ? { viewport: windowSettings.viewport } : {})
+    });
     const page = context.pages()[0] ?? (await context.newPage());
     return {
       context,
@@ -51,9 +57,12 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
   const browser = await chromium.launch(launchOptions);
 
   const context = await browser.newContext(
-    storageStatePath && fs.existsSync(storageStatePath)
-      ? { storageState: storageStatePath }
-      : undefined
+    {
+      ...(storageStatePath && fs.existsSync(storageStatePath)
+        ? { storageState: storageStatePath }
+        : {}),
+      ...(windowSettings.viewport ? { viewport: windowSettings.viewport } : {})
+    }
   );
   const page = await context.newPage();
 

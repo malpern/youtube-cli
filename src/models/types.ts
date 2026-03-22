@@ -20,6 +20,12 @@ export interface RunConfig {
   browserChannel: string | undefined;
   browserExecutablePath: string | undefined;
   browserCdpUrl: string | undefined;
+  browserWindowWidth: number | undefined;
+  browserWindowHeight: number | undefined;
+  browserWindowPositionX: number | undefined;
+  browserWindowPositionY: number | undefined;
+  browserViewportWidth: number | undefined;
+  browserViewportHeight: number | undefined;
   headless: boolean;
   artifactsDirName: string;
   stopOnAccountMismatch: boolean;

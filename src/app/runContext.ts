@@ -45,6 +45,12 @@ export function createRunContext(
     browserChannel?: string;
     browserExecutablePath?: string;
     browserCdpUrl?: string;
+    browserWindowWidth?: string;
+    browserWindowHeight?: string;
+    browserWindowPositionX?: string;
+    browserWindowPositionY?: string;
+    browserViewportWidth?: string;
+    browserViewportHeight?: string;
     headless?: boolean;
     slowMoMs?: string;
   };
@@ -58,6 +64,12 @@ export function createRunContext(
     ...(options.browserChannel ? { browserChannel: options.browserChannel } : {}),
     ...(options.browserExecutablePath ? { browserExecutablePath: options.browserExecutablePath } : {}),
     ...(options.browserCdpUrl ? { browserCdpUrl: options.browserCdpUrl } : {}),
+    ...(options.browserWindowWidth ? { browserWindowWidth: Number(options.browserWindowWidth) } : {}),
+    ...(options.browserWindowHeight ? { browserWindowHeight: Number(options.browserWindowHeight) } : {}),
+    ...(options.browserWindowPositionX ? { browserWindowPositionX: Number(options.browserWindowPositionX) } : {}),
+    ...(options.browserWindowPositionY ? { browserWindowPositionY: Number(options.browserWindowPositionY) } : {}),
+    ...(options.browserViewportWidth ? { browserViewportWidth: Number(options.browserViewportWidth) } : {}),
+    ...(options.browserViewportHeight ? { browserViewportHeight: Number(options.browserViewportHeight) } : {}),
     ...(typeof options.headless === "boolean" && options.headless ? { headless: true } : {}),
     ...(options.slowMoMs ? { slowMoMs: Number(options.slowMoMs) } : {})
   };

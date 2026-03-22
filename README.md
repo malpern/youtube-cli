@@ -204,6 +204,8 @@ npm run build:release
 
 By default the live smoke suite reads `config.local.json`. You can override that with `YOUTUBE_WATCHLIST_CONFIG=/absolute/path/to/config.json`.
 
+If you launch the browser through Playwright instead of attaching over CDP, you can reduce visual noise in headed local runs with `--browser-window-width`, `--browser-window-height`, `--browser-window-position-x`, `--browser-window-position-y`, `--browser-viewport-width`, and `--browser-viewport-height`. `doctor` now reports whether those settings apply or are ignored.
+
 The smoke suite fails the build when any of these checks break:
 
 - authenticated YouTube session is missing or the wrong account is active
@@ -226,6 +228,7 @@ That workflow expects:
 ## Docs
 
 - [Authentication Workflow](/Users/malpern/local-code/youtube-cli/docs/authentication.md)
+- [Operator Experience](/Users/malpern/local-code/youtube-cli/docs/operator-experience.md)
 - [Implementation Plan](/Users/malpern/local-code/youtube-cli/docs/implementation-plan.md)
 - [Performance Notes](/Users/malpern/local-code/youtube-cli/docs/performance.md)
 - [ADR Index](/Users/malpern/local-code/youtube-cli/docs/adr/README.md)

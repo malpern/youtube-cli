@@ -6,6 +6,7 @@ import { captureAccountSnapshot, accountMatches } from "../browser/accountCheck.
 import { launchBrowserSession } from "../browser/launch.js";
 import { createRunContext } from "../app/runContext.js";
 import type { DoctorCheck } from "../models/types.js";
+import { resolveBrowserWindowSettings } from "../services/browserWindowSettings.js";
 
 interface DoctorOptions {
   json?: boolean;
@@ -51,6 +52,20 @@ export async function runDoctor(command: Command): Promise<void> {
       storageStatePath: ctx.config.storageStatePath,
       browserChannel: ctx.config.browserChannel,
       browserExecutablePath: ctx.config.browserExecutablePath
+    }
+  });
+
+  const windowSettings = resolveBrowserWindowSettings(ctx.config);
+  checks.push({
+    name: "browser.windowing",
+    ok: true,
+    message: windowSettings.summary,
+    details: {
+      nativeWindowControlSupported: windowSettings.nativeWindowControlSupported,
+      nativeWindowArgs: windowSettings.nativeWindowArgs,
+      viewport: windowSettings.viewport,
+      ignoredSettings: windowSettings.ignoredSettings,
+      notes: windowSettings.notes
     }
   });
 
