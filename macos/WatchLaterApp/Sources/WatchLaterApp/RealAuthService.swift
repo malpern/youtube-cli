@@ -1,12 +1,18 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.malpern.watchlaterapp", category: "AuthService")
 
 @MainActor
 struct RealAuthService: AuthService {
     func checkAuthentication() async throws -> AuthCheckResult {
+        log.info("Checking authentication via doctor --json")
         let result = try await CLIProcessRunner.run(arguments: CLIBackendPaths.commonCLIArguments + ["doctor", "--json"])
         let payload = try JSONDecoder().decode(DoctorResponse.self, from: result.stdout)
         try CLIAppContract.validate(payload, surface: .doctor)
-        return buildResult(from: payload)
+        let authResult = buildResult(from: payload)
+        log.info("Auth check: authenticated=\(authResult.isAuthenticated), title=\(authResult.title, privacy: .public)")
+        return authResult
     }
 
     func openLogin() async throws {

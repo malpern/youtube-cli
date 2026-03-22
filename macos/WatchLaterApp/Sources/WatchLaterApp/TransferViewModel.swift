@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -33,6 +34,7 @@ final class TransferViewModel {
         accountLabel: nil
     )
 
+    @ObservationIgnored private let log = Logger(subsystem: "com.malpern.watchlaterapp", category: "TransferViewModel")
     @ObservationIgnored private let playlistService: any PlaylistService
     @ObservationIgnored private let moveService: any MoveService
     @ObservationIgnored private let authService: any AuthService
@@ -276,8 +278,10 @@ final class TransferViewModel {
     }
 
     func loadPlaylistsIfNeeded() async {
+        log.info("loadPlaylistsIfNeeded: hasLoaded=\(self.hasLoadedPlaylists), backend=\(self.preferences.backendMode.rawValue, privacy: .public)")
         await refreshAuthenticationStatus(announce: false)
         guard !requiresAuthenticationGate else {
+            log.info("loadPlaylistsIfNeeded: blocked by auth gate")
             return
         }
 
@@ -457,9 +461,11 @@ final class TransferViewModel {
 
     func beginTransfer() {
         guard let destination else {
+            log.warning("beginTransfer: no destination selected")
             return
         }
 
+        log.info("beginTransfer: destination=\(destination.displayName, privacy: .public)")
         moveTask?.cancel()
         resetRunState()
         hasStartedTransfer = true
@@ -528,18 +534,22 @@ final class TransferViewModel {
         } catch is CancellationError {
             isRunningTransfer = false
             statusMessage = "Migration cancelled."
+            log.info("performMove: cancelled")
         } catch {
             isRunningTransfer = false
             errorMessage = error.localizedDescription
             statusMessage = "Migration failed."
+            log.error("performMove: failed — \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func handle(_ event: MoveEvent) {
         switch event {
         case .started(let targetPlaylist, _):
+            log.info("Event: started, target=\(targetPlaylist, privacy: .public)")
             statusMessage = "Preparing migration to \(targetPlaylist)."
         case .phase(let phase, let status, _):
+            log.info("Event: phase=\(phase.rawValue, privacy: .public), status=\(String(describing: status), privacy: .public)")
             currentPhase = phase
             applyPhaseStatus(status, to: phase)
             updateStatusMessage(for: phase)
@@ -558,6 +568,7 @@ final class TransferViewModel {
             }
             updateStatusMessage(for: phase)
         case .result(let payload):
+            log.info("Event: result ok=\(payload.ok), error=\(payload.errorMessage ?? "none", privacy: .public)")
             latestResult = payload
             isRunningTransfer = false
             moveTask = nil

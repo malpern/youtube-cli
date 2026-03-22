@@ -11,14 +11,32 @@ struct ExistingPlaylistPickerView: View {
         realPlaylists.isEmpty && !model.isLoadingPlaylists
     }
 
+    private var showsLoadingSpinner: Bool {
+        realPlaylists.isEmpty && model.isLoadingPlaylists
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if showsUnavailableView {
+            if showsLoadingSpinner {
+                loadingView
+            } else if showsUnavailableView {
                 unavailableView
             } else {
                 playlistList
             }
         }
+    }
+
+    private var loadingView: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.regular)
+            Text("Loading playlists…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: AppStyle.playlistListHeight)
     }
 
     private var unavailableView: some View {
@@ -42,19 +60,28 @@ struct ExistingPlaylistPickerView: View {
         ZStack {
             Color(nsColor: .controlBackgroundColor)
 
-            List {
-                ForEach(realPlaylists) { playlist in
-                    PlaylistSelectionRowView(
-                        playlist: playlist,
-                        isSelected: model.selectedPlaylistID == playlist.id,
-                        select: { model.selectPlaylist(id: playlist.id) }
-                    )
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(realPlaylists) { playlist in
+                        PlaylistSelectionRowView(
+                            playlist: playlist,
+                            isSelected: model.selectedPlaylistID == playlist.id,
+                            select: { model.selectPlaylist(id: playlist.id) }
+                        )
+                        .id(playlist.id)
+                    }
+                }
+                .onAppear {
+                    if let selectedID = model.selectedPlaylistID {
+                        proxy.scrollTo(selectedID, anchor: .center)
+                    }
                 }
             }
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        .scrollIndicators(.visible)
+        .scrollIndicators(.visible, axes: .vertical)
+        .scrollBounceBehavior(.basedOnSize)
         .disabled(model.isRunningTransfer)
         .frame(height: AppStyle.playlistListHeight)
     }

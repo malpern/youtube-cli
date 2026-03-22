@@ -1,11 +1,15 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.malpern.watchlaterapp", category: "MoveService")
 
 @MainActor
 struct RealMoveService: MoveService {
     let preferences: AppPreferences
 
     func runMove(to destination: TransferDestination, options: MoveExecutionOptions) -> AsyncThrowingStream<MoveEvent, Error> {
-        AsyncThrowingStream { continuation in
+        log.info("Starting move to \(destination.displayName, privacy: .public)")
+        return AsyncThrowingStream { continuation in
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
             let state = MoveStreamState()

@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.malpern.watchlaterapp", category: "CLIProcessRunner")
 
 enum CLIProcessRunner {
     static func makeProcess(arguments: [String]) throws -> Process {
@@ -19,6 +22,7 @@ enum CLIProcessRunner {
     }
 
     static func run(arguments: [String]) async throws -> CLIProcessResult {
+        log.info("Running CLI: \(arguments.joined(separator: " "), privacy: .public)")
         let process = try makeProcess(arguments: arguments)
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -56,6 +60,12 @@ enum CLIProcessRunner {
                     trailingStderr: stderrPipe.fileHandleForReading.readDataToEndOfFile()
                 )
 
+                let stderrPreview = String(decoding: result.stderr.prefix(500), as: UTF8.self)
+                if result.exitStatus == 0 {
+                    log.info("CLI exited 0, stdout=\(result.stdout.count) bytes")
+                } else {
+                    log.error("CLI exited \(result.exitStatus), stderr: \(stderrPreview, privacy: .public)")
+                }
                 continuation.resume(returning: result)
             }
 

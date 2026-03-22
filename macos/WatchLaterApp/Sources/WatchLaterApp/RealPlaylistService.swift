@@ -1,17 +1,24 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.malpern.watchlaterapp", category: "PlaylistService")
 
 @MainActor
 struct RealPlaylistService: PlaylistService {
     func fetchPlaylists() async throws -> PlaylistLibrarySnapshot {
+        log.info("Fetching playlists via playlists --json")
         let result = try await CLIProcessRunner.run(arguments: CLIBackendPaths.commonCLIArguments + ["playlists", "--json"])
         let decoder = JSONDecoder()
         let payload = try decoder.decode(PlaylistsResponse.self, from: result.stdout)
         try CLIAppContract.validate(payload, surface: .playlists)
 
         guard payload.ok else {
-            throw CLIProcessError(description: payload.error ?? fallbackErrorMessage(from: result))
+            let errorText = payload.error ?? fallbackErrorMessage(from: result)
+            log.error("Playlist fetch failed: \(errorText, privacy: .public)")
+            throw CLIProcessError(description: errorText)
         }
 
+        log.info("Loaded \(payload.playlists?.count ?? 0) playlists, watchLater=\(payload.watchLater?.videoCount ?? 0) videos")
         return PlaylistLibrarySnapshot(
             watchLater: WatchLaterSummary(
                 videoCount: payload.watchLater?.videoCount ?? 0,
