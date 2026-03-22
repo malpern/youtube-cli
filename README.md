@@ -44,6 +44,8 @@ You can launch the dedicated browser with:
 npm run browser:open
 ```
 
+The bundled macOS app now uses the same dedicated browser-launch pattern for its login/browser actions, so local app-driven auth and CLI-driven auth stay on the same CDP/profile path.
+
 Environment check:
 
 ```bash

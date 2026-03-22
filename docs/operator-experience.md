@@ -17,7 +17,7 @@ This document tracks ways to reduce visual noise on macOS without making the bro
 - [x] Surface browser windowing behavior in `doctor` so operators can see when layout controls apply and when CDP mode ignores them.
 - [x] Document a low-disruption macOS workflow for headed local work and a headless workflow for release checks.
 - [x] Add an optional helper script that launches a dedicated Chrome or Chrome Canary window with the project profile, remote debugging port, and recommended window bounds.
-- [ ] Evaluate whether a separate automation-only browser app bundle is worth supporting for local smoke runs.
+- [x] Evaluate whether a separate automation-only browser app bundle is worth supporting for local smoke runs. Current conclusion: no separate browser app bundle is needed. The existing macOS app and CLI helper should launch the same dedicated automation browser profile and window shape instead.
 - [x] Move the `playlists` inspection flow onto a short-lived dedicated page so it does not stomp the main automation page during operator use.
 
 ## Recommended macOS Modes
@@ -39,6 +39,8 @@ npm run browser:open
 CDP mode controls an already-running browser window, so native window size and position overrides from the CLI are intentionally ignored. Manage placement at launch time or with a dedicated Space.
 
 The `playlists` command now uses a short-lived dedicated inspection page and closes it when finished, so it no longer reuses and visibly repurposes the main automation page.
+
+The existing macOS app now launches the same dedicated browser shape as the CLI helper, including the configured CDP port and window bounds. That makes a separate automation-only browser app bundle unnecessary for now.
 
 ### Playwright-launched local sessions
 

@@ -10,18 +10,7 @@ struct RealAuthService: AuthService {
 
     func openLogin() async throws {
         try FileManager.default.createDirectory(at: CLIBackendPaths.chromeProfileURL, withIntermediateDirectories: true)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = [
-            "-na",
-            "Google Chrome",
-            "--args",
-            "--remote-debugging-port=\(CLIBackendPaths.remoteDebuggingPort)",
-            "--user-data-dir=\(CLIBackendPaths.chromeProfileURL.path(percentEncoded: false))",
-            CLIBackendPaths.youtubeURL.absoluteString
-        ]
-        try process.run()
+        try AutomationBrowserLauncher.openLogin()
     }
 
     private func buildResult(from response: DoctorResponse) -> AuthCheckResult {

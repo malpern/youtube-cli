@@ -59,6 +59,8 @@ Or use the repo helper, which applies the same pattern with the configured profi
 npm run browser:open
 ```
 
+The macOS app uses the same dedicated browser-launch shape for its login/open-browser actions, so local app-driven auth now stays aligned with the CLI helper instead of opening a different browser session.
+
 On macOS, put that dedicated browser window on its own Space if you want to keep headed automation out of the user’s main desktop. This is more reliable than trying to hide or minimize the automation window while the CLI is driving it.
 
 After the browser is open and signed in, attach the CLI with:
