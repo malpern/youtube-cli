@@ -17,6 +17,7 @@ import { readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourc
 import { assessSourceItemPolicy } from "../services/sourceItemPolicy.js";
 import { planRepair } from "../services/repairPlanner.js";
 import { planRepairResume } from "../services/resumePlanner.js";
+import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
 import { readVerificationReport, resolveVerificationReportPath } from "../services/verificationReport.js";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -30,11 +31,6 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   }
 
   return Math.floor(parsed);
-}
-
-function getTargetPlaylist(command: Command): string {
-  const opts = command.opts<{ targetPlaylist?: string }>();
-  return opts.targetPlaylist?.trim() || "Old Watch";
 }
 
 function appendRepairOperation(
@@ -58,6 +54,7 @@ export async function runRepair(command: Command): Promise<void> {
   const ctx = createRunContext(command, "repair");
   const localOptions = command.opts<{
     targetPlaylist?: string;
+    targetPlaylistId?: string;
     verificationRunId?: string;
     milestoneEvery?: string;
     maxItems?: string;
@@ -70,7 +67,9 @@ export async function runRepair(command: Command): Promise<void> {
     cooldownEvery?: string;
     cooldownMs?: string;
   }>();
-  const targetPlaylist = getTargetPlaylist(command);
+  const targetRequest = getTargetPlaylistRequest(localOptions);
+  const targetPlaylist = targetRequest.targetPlaylist;
+  const targetPlaylistId = targetRequest.targetPlaylistId;
   const milestoneEvery = parsePositiveInt(localOptions.milestoneEvery, 5);
   const retryPolicy = resolveMutationRetryPolicy(localOptions);
   const pacingPolicy = resolveMutationPacingPolicy(localOptions);
@@ -85,7 +84,10 @@ export async function runRepair(command: Command): Promise<void> {
     .filter((item): item is InventoryItem => item !== undefined)
     .slice(0, localOptions.maxItems ? parsePositiveInt(localOptions.maxItems, 0) : undefined);
 
-  if (verificationReport.targetPlaylist !== targetPlaylist) {
+  if (
+    verificationReport.targetPlaylist !== targetPlaylist &&
+    (!targetPlaylistId || verificationReport.targetPlaylistId !== targetPlaylistId)
+  ) {
     throw new Error(
       `Verification report target playlist '${verificationReport.targetPlaylist}' does not match requested target playlist '${targetPlaylist}'`
     );
@@ -95,7 +97,8 @@ export async function runRepair(command: Command): Promise<void> {
     ctx.logEvent("repair", "error", "repair.blocked", "Repair is blocked by verification state", {
       verificationPath,
       blockedReasons: repairPlan.blockedReasons,
-      targetPlaylist
+      targetPlaylist,
+      targetPlaylistId
     });
     ctx.db.upsertRunState("repair", "failed");
     throw new Error(`Repair blocked: ${repairPlan.blockedReasons.join(", ")}`);
@@ -127,6 +130,7 @@ export async function runRepair(command: Command): Promise<void> {
       verificationPath,
       sourceSnapshotRunId: sourceSnapshot.runId,
       targetPlaylist,
+      targetPlaylistId,
       resumed: resumePlan.resumed,
       resumeProcessedCount: resumePlan.processedCount
     });
@@ -172,6 +176,8 @@ export async function runRepair(command: Command): Promise<void> {
     let failedCount = resumePlan.failedCount;
 
     await assertAuthenticatedYouTubeSession(session.page, ctx.config, "repair.start", { navigate: true });
+    const target = await resolveTargetPlaylistForSavePanel(session.page, ctx.config.youtubeBaseUrl, targetRequest);
+    const resolvedTargetPlaylist = target.title;
 
     for (const [index, item] of resumePlan.remainingItems.entries()) {
       const policy = assessSourceItemPolicy(item);
@@ -200,7 +206,7 @@ export async function runRepair(command: Command): Promise<void> {
             run: async () => {
               await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.before`);
               try {
-                const response = await ensureVideoSavedToPlaylist(session.page, videoUrl, targetPlaylist, async () => {
+                const response = await ensureVideoSavedToPlaylist(session.page, videoUrl, target, async () => {
                   await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.open-save-panel`);
                 });
                 await assertAuthenticatedYouTubeSession(session.page, ctx.config, `repair.item.${item.sourceIndex}.after`);
@@ -218,7 +224,8 @@ export async function runRepair(command: Command): Promise<void> {
                 nextAttempt,
                 delayMs,
                 error: error.message,
-                targetPlaylist
+                targetPlaylist: target.title,
+                targetPlaylistId: target.playlistId ?? null
               });
             },
             sleep: async (delayMs) => {
@@ -254,7 +261,8 @@ export async function runRepair(command: Command): Promise<void> {
               payload: {
                 verificationPath,
                 sourceSnapshotRunId: sourceSnapshot.runId,
-                targetPlaylist,
+                targetPlaylist: resolvedTargetPlaylist,
+                targetPlaylistId,
                 processed: completedCount,
                 total: repairItems.length,
                 repairedCount,
@@ -290,7 +298,8 @@ export async function runRepair(command: Command): Promise<void> {
             error: message,
             attempts: retryPolicy.maxAttempts,
             ...(fs.existsSync(screenshotPath) ? { screenshotPath } : {}),
-            targetPlaylist
+            targetPlaylist: resolvedTargetPlaylist,
+            targetPlaylistId
           });
         }
       }
@@ -307,14 +316,16 @@ export async function runRepair(command: Command): Promise<void> {
           retryExhaustedCount,
           skippedCount,
           failedCount,
-          targetPlaylist
+          targetPlaylist: resolvedTargetPlaylist,
+          targetPlaylistId
         });
       }
 
       ctx.saveCheckpoint("repair", {
         verificationPath,
         sourceSnapshotRunId: sourceSnapshot.runId,
-        targetPlaylist,
+        targetPlaylist: resolvedTargetPlaylist,
+        targetPlaylistId,
         processed: processedCount,
         total: repairItems.length,
         repairedCount,
@@ -333,7 +344,8 @@ export async function runRepair(command: Command): Promise<void> {
           jitterMs: pacingDelay.jitterMs,
           cooldownMs: pacingDelay.cooldownMs,
           totalDelayMs: pacingDelay.totalDelayMs,
-          targetPlaylist
+          targetPlaylist: resolvedTargetPlaylist,
+          targetPlaylistId
         });
         await session.page.waitForTimeout(pacingDelay.totalDelayMs);
       }
@@ -342,7 +354,8 @@ export async function runRepair(command: Command): Promise<void> {
     ctx.logEvent("repair", "info", "repair.complete", "Repair pass completed", {
       verificationPath,
       sourceSnapshotRunId: sourceSnapshot.runId,
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       total: repairItems.length,
       repairedCount,
       savedCount,
@@ -364,6 +377,7 @@ export async function runRepair(command: Command): Promise<void> {
           verificationPath,
           sourceSnapshotRunId: sourceSnapshot.runId,
           targetPlaylist,
+          targetPlaylistId,
           processed: resumePlan.processedCount,
           total: repairItems.length,
           repairedCount: resumePlan.repairedCount,
@@ -382,7 +396,8 @@ export async function runRepair(command: Command): Promise<void> {
     ctx.logEvent("repair", "error", "repair.failed", "Repair pass failed", {
       error: message,
       verificationPath,
-      targetPlaylist
+      targetPlaylist,
+      targetPlaylistId
     });
     ctx.db.upsertRunState("repair", "failed");
     throw error;

@@ -144,5 +144,5 @@ Planned follow-up:
 
 1. Brainstorm safe ways to increase speed for large migrations without weakening verification or deletion gating.
 2. Separate optimizations for `saved` work versus `already-saved` idempotent checks.
-3. Measure each candidate optimization against the baseline in [Performance Notes](/Users/malpern/local-code/youtube-watchlist/docs/performance.md).
+3. Measure each candidate optimization against the baseline in [Performance Notes](/Users/malpern/local-code/youtube-cli/docs/performance.md).
 4. Keep any accepted speed changes behind the same durable logging, checkpointing, and audit model.

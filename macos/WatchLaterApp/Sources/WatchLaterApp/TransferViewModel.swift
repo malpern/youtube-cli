@@ -1,0 +1,685 @@
+import Foundation
+import Observation
+
+@MainActor
+@Observable
+final class TransferViewModel {
+    var watchLaterSummary = WatchLaterSummary(videoCount: 0, maxItems: 5_000)
+    var availablePlaylists: [PlaylistSummary] = []
+    var selectedPlaylistID: PlaylistSummary.ID?
+    var isEditingDestination = false
+    var isShowingNewPlaylistSheet = false
+    var newPlaylistDraftName = "Old Watch"
+    var isLoadingPlaylists = false
+    var isCheckingAuthentication = false
+    var isRunningTransfer = false
+    var hasStartedTransfer = false
+    var hasLoadedPlaylists = false
+    var isProgressExpanded = false
+    var errorMessage: String?
+    var statusMessage = "Choose a destination, then start the migration."
+    var lastRefreshDescription = "Not loaded yet"
+    var currentPhase: MovePhase?
+    var currentItem: MoveItemSnapshot?
+    var completedItems: [MoveItemSnapshot] = []
+    var copyProgress = PhaseProgressSnapshot(phase: .copy)
+    var verifyProgress = PhaseProgressSnapshot(phase: .verify)
+    var deleteProgress = PhaseProgressSnapshot(phase: .delete)
+    var latestResult: MoveResultPayload?
+    var authCheckResult = AuthCheckResult(
+        isAuthenticated: true,
+        title: "Signed in",
+        detail: "Ready",
+        accountLabel: nil
+    )
+
+    @ObservationIgnored private let playlistService: any PlaylistService
+    @ObservationIgnored private let moveService: any MoveService
+    @ObservationIgnored private let authService: any AuthService
+    @ObservationIgnored private let preferences: AppPreferences
+    @ObservationIgnored private var moveTask: Task<Void, Never>?
+
+    init(
+        playlistService: any PlaylistService,
+        moveService: any MoveService,
+        authService: any AuthService,
+        preferences: AppPreferences
+    ) {
+        self.playlistService = playlistService
+        self.moveService = moveService
+        self.authService = authService
+        self.preferences = preferences
+    }
+
+    var canRunTransfer: Bool {
+        guard !isRunningTransfer else {
+            return false
+        }
+
+        guard !requiresAuthenticationGate else {
+            return false
+        }
+
+        return destination != nil
+    }
+
+    var requiresAuthenticationGate: Bool {
+        preferences.backendMode == .real && !authCheckResult.isAuthenticated
+    }
+
+    var authGateTitle: String {
+        authCheckResult.title
+    }
+
+    var authGateDetail: String {
+        authCheckResult.detail
+    }
+
+    var canAcknowledgeCompletion: Bool {
+        latestResult?.ok == true && !isRunningTransfer
+    }
+
+    var selectedPlaylist: PlaylistSummary? {
+        availablePlaylists.first(where: { $0.id == selectedPlaylistID })
+    }
+
+    var selectedPlaylistTitle: String {
+        selectedPlaylist?.title ?? "Choose a playlist"
+    }
+
+    var isSelectedPlaylistDraft: Bool {
+        selectedPlaylist?.isDraft == true
+    }
+
+    var destinationSummary: String {
+        destination?.displayName ?? "Choose a destination"
+    }
+
+    var heroTitle: String {
+        if latestResult?.ok == true {
+            return "Transfer Complete"
+        }
+
+        return "Transferring to \(destinationSummary)"
+    }
+
+    var heroMessage: String {
+        if let errorMessage {
+            return errorMessage
+        }
+
+        if latestResult?.ok == true {
+            return "Migration complete"
+        }
+
+        switch currentPhase {
+        case .copy:
+            if let currentItem {
+                return currentItem.title
+            }
+            return "Copying videos into \(destinationSummary)"
+        case .verify:
+            return "Verifying migrated items"
+        case .delete:
+            if let currentItem {
+                return "Removing from Watch Later: \(currentItem.title)"
+            }
+            return "Removing migrated videos from Watch Later"
+        case .setup:
+            return "Preparing the destination playlist"
+        case .inventory:
+            return "Capturing the Watch Later inventory"
+        case .none:
+            return statusMessage
+        }
+    }
+
+    var overallProgress: Double {
+        if latestResult?.ok == true {
+            return 1
+        }
+
+        let copy = copyProgress.fraction
+        let verify = verifyProgress.fraction
+        let delete = deleteProgress.fraction
+        let weightedProgress = (copy + verify + delete) / 3
+
+        switch currentPhase {
+        case .setup:
+            return max(weightedProgress, 0.05)
+        case .inventory:
+            return max(weightedProgress, 0.12)
+        default:
+            return weightedProgress
+        }
+    }
+
+    var overallProgressText: String {
+        if latestResult?.ok == true {
+            return "100%"
+        }
+
+        if let activeProgress {
+            return activeProgress.countLabel
+        }
+
+        return "Ready"
+    }
+
+    var activeProgress: PhaseProgressSnapshot? {
+        if let currentPhase, let snapshot = progressSnapshotIfVisible(for: currentPhase) {
+            return snapshot
+        }
+
+        if deleteProgress.status == .running {
+            return deleteProgress
+        }
+
+        if verifyProgress.status == .running {
+            return verifyProgress
+        }
+
+        if copyProgress.status == .running {
+            return copyProgress
+        }
+
+        return nil
+    }
+
+    var completedVideoCount: Int {
+        max(copyProgress.total, verifyProgress.total, deleteProgress.total, copyProgress.completed, verifyProgress.completed, deleteProgress.completed)
+    }
+
+    var completedSummaryText: String {
+        let count = completedVideoCount
+        let noun = count == 1 ? "video" : "videos"
+        return "Transfer of \(count) \(noun) complete"
+    }
+
+    var completedErrorText: String? {
+        if let errorMessage, !errorMessage.isEmpty {
+            return errorMessage
+        }
+
+        return nil
+    }
+
+    var overallPhaseMarkerPositions: [Double] {
+        [0.12, 1.0 / 3.0, 2.0 / 3.0]
+    }
+
+    var completedMosaicItems: [MoveItemSnapshot] {
+        let items = completedItems
+        let targetCount = min(9, items.count)
+        guard targetCount > 0 else {
+            return []
+        }
+
+        if items.count <= targetCount {
+            return items
+        }
+
+        let lastIndex = items.count - 1
+        let denominator = max(targetCount - 1, 1)
+
+        return (0..<targetCount).map { slot in
+            let mappedIndex = Int(round(Double(slot) * Double(lastIndex) / Double(denominator)))
+            return items[mappedIndex]
+        }
+    }
+
+    var phaseProgressRows: [PhaseProgressSnapshot] {
+        [copyProgress, verifyProgress, deleteProgress]
+    }
+
+    var accessibilityProgressSummary: String {
+        let phaseText = currentPhase?.title ?? "Waiting to start"
+        let itemText = currentItem?.title ?? statusMessage
+        return "\(phaseText). \(overallProgressText). \(itemText)"
+    }
+
+    var shouldShowProgressCard: Bool {
+        hasStartedTransfer || latestResult != nil
+    }
+
+    var isShowingCompletedState: Bool {
+        latestResult?.ok == true
+    }
+
+    var thumbnailAccessibilityLabel: String {
+        if latestResult?.ok == true {
+            return "Migration complete preview"
+        }
+
+        switch currentPhase {
+        case .verify:
+            return "Verification preview"
+        case .setup:
+            return "Setup preview"
+        case .inventory:
+            return "Inventory preview"
+        case .delete:
+            return "Delete preview"
+        case .copy:
+            return "Current video preview"
+        case .none:
+            return "Migration preview"
+        }
+    }
+
+    var thumbnailAccessibilityValue: String {
+        if let currentItem {
+            return currentItem.title
+        }
+
+        return statusMessage
+    }
+
+    func loadPlaylistsIfNeeded() async {
+        await refreshAuthenticationStatus(announce: false)
+        guard !requiresAuthenticationGate else {
+            return
+        }
+
+        guard !hasLoadedPlaylists else {
+            return
+        }
+
+        await refreshPlaylists(announce: true)
+    }
+
+    func reloadPlaylistsForBackendChange() async {
+        guard !isRunningTransfer else {
+            return
+        }
+
+        hasLoadedPlaylists = false
+        let customPlaylists = availablePlaylists.filter(\.isDraft)
+        availablePlaylists = customPlaylists
+        selectedPlaylistID = chooseSelectedPlaylistID(from: availablePlaylists)
+        watchLaterSummary = WatchLaterSummary(videoCount: 0, maxItems: 5_000)
+        lastRefreshDescription = "Refreshing…"
+        errorMessage = nil
+        await refreshAuthenticationStatus(announce: true)
+        guard !requiresAuthenticationGate else {
+            return
+        }
+        await refreshPlaylists(announce: true)
+    }
+
+    func runPlaylistPolling() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(30))
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            guard preferences.playlistPollingEnabled else {
+                continue
+            }
+
+            guard !isRunningTransfer, !isShowingNewPlaylistSheet else {
+                continue
+            }
+
+            guard !requiresAuthenticationGate else {
+                continue
+            }
+
+            await refreshPlaylists(announce: false)
+        }
+    }
+
+    func refreshAuthenticationStatus(announce: Bool) async {
+        guard preferences.backendMode == .real else {
+            authCheckResult = AuthCheckResult(
+                isAuthenticated: true,
+                title: "Mock backend ready",
+                detail: "Mock mode does not require YouTube authentication.",
+                accountLabel: nil
+            )
+            return
+        }
+
+        isCheckingAuthentication = true
+        do {
+            let result = try await authService.checkAuthentication()
+            authCheckResult = result
+            errorMessage = nil
+            if announce {
+                statusMessage = result.title
+            }
+        } catch {
+            authCheckResult = AuthCheckResult(
+                isAuthenticated: false,
+                title: "Sign in to YouTube",
+                detail: "Use the dedicated Chrome profile to sign in, then return here and check again.",
+                accountLabel: nil
+            )
+            if announce {
+                statusMessage = "Sign in to YouTube to continue."
+            }
+        }
+        isCheckingAuthentication = false
+    }
+
+    func openYouTubeLogin() {
+        Task {
+            do {
+                try await authService.openLogin()
+                authCheckResult = AuthCheckResult(
+                    isAuthenticated: false,
+                    title: "Finish signing in",
+                    detail: "Google Chrome opened on the dedicated YouTube profile. Sign in there, then click 'I've signed in. Check again'.",
+                    accountLabel: nil
+                )
+                statusMessage = "Finish signing in in Chrome, then return to the app."
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Could not open Google Chrome."
+            }
+        }
+    }
+
+    func refreshPlaylists(announce: Bool) async {
+        isLoadingPlaylists = true
+        errorMessage = nil
+
+        do {
+            let snapshot = try await playlistService.fetchPlaylists()
+            let playlists = snapshot.playlists
+                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+
+            let customPlaylists = availablePlaylists.filter(\.isDraft)
+            watchLaterSummary = snapshot.watchLater
+            availablePlaylists = customPlaylists + playlists
+            hasLoadedPlaylists = true
+            isLoadingPlaylists = false
+            selectedPlaylistID = chooseSelectedPlaylistID(from: availablePlaylists)
+            lastRefreshDescription = Self.refreshTimestampFormatter.string(from: .now)
+            if announce {
+                statusMessage = "Loaded \(playlists.count) playlists."
+            }
+        } catch {
+            isLoadingPlaylists = false
+            let customPlaylists = availablePlaylists.filter(\.isDraft)
+            availablePlaylists = customPlaylists
+            selectedPlaylistID = chooseSelectedPlaylistID(from: availablePlaylists)
+            watchLaterSummary = WatchLaterSummary(videoCount: 0, maxItems: 5_000)
+            hasLoadedPlaylists = false
+            errorMessage = error.localizedDescription
+            if announce {
+                statusMessage = "Playlist loading failed."
+            }
+        }
+    }
+
+    func presentNewPlaylistSheet() {
+        newPlaylistDraftName = "Old Watch"
+        isShowingNewPlaylistSheet = true
+    }
+
+    func toggleDestinationEditing() {
+        isEditingDestination.toggle()
+    }
+
+    func selectPlaylist(id: PlaylistSummary.ID) {
+        selectedPlaylistID = id
+        isEditingDestination = false
+    }
+
+    func dismissNewPlaylistSheet() {
+        isShowingNewPlaylistSheet = false
+    }
+
+    func confirmNewPlaylist() {
+        let normalizedName = newPlaylistDraftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            return
+        }
+
+        let customPlaylist = PlaylistSummary(
+            id: UUID().uuidString,
+            title: normalizedName,
+            visibility: "New Playlist",
+            videoCount: 0,
+            isDraft: true
+        )
+
+        availablePlaylists.removeAll { $0.isDraft && $0.title == normalizedName }
+        availablePlaylists.insert(customPlaylist, at: 0)
+        selectedPlaylistID = customPlaylist.id
+        isEditingDestination = false
+        statusMessage = "Added \(normalizedName)."
+        isShowingNewPlaylistSheet = false
+    }
+
+    func beginTransfer() {
+        guard let destination else {
+            return
+        }
+
+        moveTask?.cancel()
+        resetRunState()
+        hasStartedTransfer = true
+        isRunningTransfer = true
+        isEditingDestination = false
+        errorMessage = nil
+        statusMessage = "Preparing migration to \(destination.displayName)."
+
+        moveTask = Task {
+            await performMove(to: destination)
+        }
+    }
+
+    func toggleProgressExpansion() {
+        isProgressExpanded.toggle()
+    }
+
+    func acknowledgeCompletion() {
+        guard canAcknowledgeCompletion else {
+            return
+        }
+
+        currentPhase = nil
+        currentItem = nil
+        completedItems = []
+        latestResult = nil
+        hasStartedTransfer = false
+        copyProgress = PhaseProgressSnapshot(phase: .copy)
+        verifyProgress = PhaseProgressSnapshot(phase: .verify)
+        deleteProgress = PhaseProgressSnapshot(phase: .delete)
+        isProgressExpanded = false
+        isEditingDestination = false
+        statusMessage = "Choose a destination, then start the migration."
+    }
+
+    private var destination: TransferDestination? {
+        guard let selectedPlaylist else {
+            return nil
+        }
+
+        let normalizedName = selectedPlaylist.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            return nil
+        }
+
+        if selectedPlaylist.isDraft {
+            return .newPlaylist(name: normalizedName)
+        }
+
+        return .existingPlaylist(id: selectedPlaylist.id, title: selectedPlaylist.title)
+    }
+
+    private func resetRunState() {
+        currentPhase = nil
+        currentItem = nil
+        completedItems = []
+        latestResult = nil
+        copyProgress = PhaseProgressSnapshot(phase: .copy)
+        verifyProgress = PhaseProgressSnapshot(phase: .verify)
+        deleteProgress = PhaseProgressSnapshot(phase: .delete)
+        isProgressExpanded = false
+        isEditingDestination = false
+    }
+
+    private func performMove(to destination: TransferDestination) async {
+        do {
+            let options = MoveExecutionOptions(
+                avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists
+            )
+
+            for try await event in moveService.runMove(to: destination, options: options) {
+                handle(event)
+            }
+        } catch is CancellationError {
+            isRunningTransfer = false
+            statusMessage = "Migration cancelled."
+        } catch {
+            isRunningTransfer = false
+            errorMessage = error.localizedDescription
+            statusMessage = "Migration failed."
+        }
+    }
+
+    private func handle(_ event: MoveEvent) {
+        switch event {
+        case .started(let targetPlaylist, _):
+            statusMessage = "Preparing migration to \(targetPlaylist)."
+        case .phase(let phase, let status, _):
+            currentPhase = phase
+            applyPhaseStatus(status, to: phase)
+            updateStatusMessage(for: phase)
+        case .progress(let phase, let completed, let total, let message):
+            currentPhase = phase
+            updateProgress(for: phase, completed: completed, total: total, status: completed >= total ? .completed : .running)
+            statusMessage = message
+        case .item(let phase, let completed, let total, let item, _):
+            currentPhase = phase
+            currentItem = item
+            if phase == .copy {
+                recordCompletedItemIfNeeded(item)
+            }
+            if let completed, let total {
+                updateProgress(for: phase, completed: completed, total: total, status: completed >= total ? .completed : .running)
+            }
+            updateStatusMessage(for: phase)
+        case .result(let payload):
+            latestResult = payload
+            isRunningTransfer = false
+            moveTask = nil
+
+            if payload.ok {
+                currentPhase = .delete
+                copyProgress.markCompletedIfNeeded()
+                verifyProgress.markCompletedIfNeeded()
+                deleteProgress.markCompletedIfNeeded()
+                statusMessage = "Migration complete."
+            } else {
+                errorMessage = payload.errorMessage
+                statusMessage = payload.errorMessage ?? "Migration failed."
+            }
+        }
+    }
+
+    private func applyPhaseStatus(_ status: MovePhaseStatus, to phase: MovePhase) {
+        switch phase {
+        case .copy, .verify, .delete:
+            updateProgress(for: phase, status: status)
+        case .setup, .inventory:
+            break
+        }
+    }
+
+    private func updateProgress(
+        for phase: MovePhase,
+        completed: Int? = nil,
+        total: Int? = nil,
+        status: MovePhaseStatus
+    ) {
+        updateProgress(for: phase) { snapshot in
+            snapshot.status = status
+
+            if let total {
+                snapshot.total = total
+            }
+
+            if let completed {
+                snapshot.completed = completed
+            }
+
+            if status == .completed {
+                snapshot.markCompletedIfNeeded()
+            }
+        }
+    }
+
+    private func updateProgress(for phase: MovePhase, mutate: (inout PhaseProgressSnapshot) -> Void) {
+        switch phase {
+        case .copy:
+            mutate(&copyProgress)
+        case .verify:
+            mutate(&verifyProgress)
+        case .delete:
+            mutate(&deleteProgress)
+        case .setup, .inventory:
+            break
+        }
+    }
+
+    private func updateStatusMessage(for phase: MovePhase) {
+        switch phase {
+        case .setup:
+            statusMessage = "Preparing the destination playlist."
+        case .inventory:
+            statusMessage = "Capturing the Watch Later inventory."
+        case .copy:
+            statusMessage = currentItem.map { "Now copying: \($0.title)" } ?? "Copying videos."
+        case .verify:
+            statusMessage = "Verifying migrated items."
+        case .delete:
+            statusMessage = currentItem.map { "Now removing from Watch Later: \($0.title)" } ?? "Removing migrated videos."
+        }
+    }
+
+    private func progressSnapshotIfVisible(for phase: MovePhase) -> PhaseProgressSnapshot? {
+        switch phase {
+        case .copy:
+            return copyProgress
+        case .verify:
+            return verifyProgress
+        case .delete:
+            return deleteProgress
+        case .setup, .inventory:
+            return nil
+        }
+    }
+
+    private func recordCompletedItemIfNeeded(_ item: MoveItemSnapshot) {
+        guard !completedItems.contains(where: { $0.id == item.id }) else {
+            return
+        }
+
+        completedItems.append(item)
+    }
+
+    private func chooseSelectedPlaylistID(from playlists: [PlaylistSummary]) -> PlaylistSummary.ID? {
+        if let selectedPlaylistID, playlists.contains(where: { $0.id == selectedPlaylistID }) {
+            return selectedPlaylistID
+        }
+
+        if let oldWatch = playlists.first(where: { $0.title == "Old Watch" }) {
+            return oldWatch.id
+        }
+
+        return playlists.first?.id
+    }
+
+    private static let refreshTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}

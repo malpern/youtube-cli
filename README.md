@@ -27,7 +27,9 @@ Install dependencies:
 npm install
 ```
 
-The repo now assumes Node 25.x. Use the version in [.nvmrc](/Users/malpern/local-code/youtube-watchlist/.nvmrc) or [.node-version](/Users/malpern/local-code/youtube-watchlist/.node-version) so native modules like `better-sqlite3` stay ABI-compatible with the CLI and tests.
+Local build now includes three gates in order: typecheck, the Vitest suite, and a live YouTube DOM smoke suite before TypeScript compilation finishes. If the live YouTube selectors drift, `npm run build` fails.
+
+The repo now assumes Node 25.x. Use the version in [.nvmrc](/Users/malpern/local-code/youtube-cli/.nvmrc) or [.node-version](/Users/malpern/local-code/youtube-cli/.node-version) so native modules like `better-sqlite3` stay ABI-compatible with the CLI and tests.
 
 Recommended authenticated development flow:
 
@@ -183,9 +185,30 @@ npm run doctor -- --config config.local.json
 
 CLI flags override config values when both are provided.
 
+## Build validation
+
+The build now runs a live DOM smoke suite:
+
+```bash
+npm run test:live-dom
+npm run build
+```
+
+By default the live smoke suite reads `config.local.json`. You can override that with `YOUTUBE_WATCHLIST_CONFIG=/absolute/path/to/config.json`.
+
+The smoke suite fails the build when any of these checks break:
+
+- authenticated YouTube session is missing or the wrong account is active
+- Watch Later row selectors no longer resolve
+- the Watch Later row action menu no longer exposes `Remove from Watch later`
+- inventory extraction can no longer read playable video URLs from Watch Later rows
+- the watch-page `Save` entry point or playlist panel no longer opens
+
+Each run writes a JSON report and failure screenshots under `runs/live-dom-smoke-*/`.
+
 ## Docs
 
-- [Authentication Workflow](/Users/malpern/local-code/youtube-watchlist/docs/authentication.md)
-- [Implementation Plan](/Users/malpern/local-code/youtube-watchlist/docs/implementation-plan.md)
-- [Performance Notes](/Users/malpern/local-code/youtube-watchlist/docs/performance.md)
-- [ADR Index](/Users/malpern/local-code/youtube-watchlist/docs/adr/README.md)
+- [Authentication Workflow](/Users/malpern/local-code/youtube-cli/docs/authentication.md)
+- [Implementation Plan](/Users/malpern/local-code/youtube-cli/docs/implementation-plan.md)
+- [Performance Notes](/Users/malpern/local-code/youtube-cli/docs/performance.md)
+- [ADR Index](/Users/malpern/local-code/youtube-cli/docs/adr/README.md)

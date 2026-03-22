@@ -31,7 +31,7 @@ Use a dedicated browser profile for this project only.
 
 Current validated profile path:
 
-`/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile`
+`/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile`
 
 Do not automate against a normal daily-use Chrome profile.
 
@@ -49,7 +49,7 @@ Use plain `Google Chrome` with a remote debugging port:
 ```bash
 open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir="/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile" \
+  --user-data-dir="/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile" \
   https://www.youtube.com
 ```
 
@@ -150,7 +150,7 @@ Example commands:
 ```bash
 open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir="/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile" \
+  --user-data-dir="/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile" \
   https://www.youtube.com
 
 PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts doctor \

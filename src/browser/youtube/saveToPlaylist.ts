@@ -1,9 +1,16 @@
 import type { Page } from "playwright";
 
 export interface PlaylistOption {
+  domIndex: number;
   title: string;
   visibility: string | null;
   pressed: boolean;
+}
+
+export interface PlaylistTarget {
+  title: string;
+  visibility?: string | null;
+  playlistId?: string;
 }
 
 export type SaveToPlaylistResult = "already-saved" | "saved";
@@ -64,28 +71,29 @@ export async function openSaveToPlaylistPanel(
 export async function listVisiblePlaylistOptions(page: Page): Promise<PlaylistOption[]> {
   const options = await page.locator(PLAYLIST_BUTTON_SELECTOR).evaluateAll((buttons) => {
     return buttons
-      .filter((button) => {
+      .map((button, domIndex) => {
         const text = (button.textContent || "").replace(/\s+/g, " ").trim();
-        return text.length > 0;
-      })
-      .map((button) => {
-        const text = (button.textContent || "").replace(/\s+/g, " ").trim();
+        if (text.length === 0) {
+          return null;
+        }
         const match = text.match(/^(.*?)(Private|Public|Unlisted)$/);
 
         return {
+          domIndex,
           title: match?.[1]?.trim() || text,
           visibility: match?.[2] ?? null,
           pressed: button.getAttribute("aria-pressed") === "true"
         };
-      });
+      })
+      .filter((option): option is PlaylistOption => option !== null);
   });
 
   return options;
 }
 
-export async function playlistExists(page: Page, playlistName: string): Promise<boolean> {
+export async function playlistExists(page: Page, target: PlaylistTarget): Promise<boolean> {
   const options = await listVisiblePlaylistOptions(page);
-  return options.some((option) => option.title === playlistName);
+  return findMatchingPlaylistOption(options, target) !== null;
 }
 
 export async function createPlaylistFromSavePanel(page: Page, playlistName: string): Promise<void> {
@@ -113,21 +121,27 @@ export async function createPlaylistFromSavePanel(page: Page, playlistName: stri
 export async function ensurePlaylistExistsFromVideo(
   page: Page,
   videoUrl: string,
-  playlistName: string,
+  target: PlaylistTarget,
   authCheck?: () => Promise<void>
 ): Promise<"existing" | "created"> {
   await openSaveToPlaylistPanel(page, videoUrl, authCheck);
 
-  if (await playlistExists(page, playlistName)) {
+  if (await playlistExists(page, target)) {
     await page.keyboard.press("Escape").catch(() => undefined);
     return "existing";
   }
 
-  await createPlaylistFromSavePanel(page, playlistName);
+  if (target.playlistId) {
+    throw new Error(
+      `Playlist '${target.title}' (${target.playlistId}) was not found in the save panel. Refusing to fall back to title-based creation.`
+    );
+  }
+
+  await createPlaylistFromSavePanel(page, target.title);
   await openSaveToPlaylistPanel(page, videoUrl, authCheck);
 
-  if (!(await playlistExists(page, playlistName))) {
-    throw new Error(`Playlist '${playlistName}' was not found after reopening the save panel`);
+  if (!(await playlistExists(page, target))) {
+    throw new Error(`Playlist '${target.title}' was not found after reopening the save panel`);
   }
 
   await page.keyboard.press("Escape").catch(() => undefined);
@@ -137,16 +151,13 @@ export async function ensurePlaylistExistsFromVideo(
 export async function ensureVideoSavedToPlaylist(
   page: Page,
   videoUrl: string,
-  playlistName: string,
+  target: PlaylistTarget,
   authCheck?: () => Promise<void>
 ): Promise<SaveToPlaylistResponse> {
   const totalStartedAt = Date.now();
   const panelTimings = await openSaveToPlaylistPanel(page, videoUrl, authCheck);
 
-  const playlistButton = page
-    .locator(PLAYLIST_BUTTON_SELECTOR)
-    .filter({ hasText: playlistName })
-    .first();
+  const playlistButton = await getPlaylistButtonForTarget(page, target);
   await playlistButton.waitFor({ state: "visible", timeout: 10_000 });
 
   const beforePressed = await playlistButton.getAttribute("aria-pressed");
@@ -165,22 +176,19 @@ export async function ensureVideoSavedToPlaylist(
 
   await playlistButton.click({ force: true, timeout: 10_000 });
   const selectionStartedAt = Date.now();
-  const selected = await waitForPlaylistSelection(page, playlistName);
+  const selected = await waitForPlaylistSelection(page, target);
   const selectionMs = Date.now() - selectionStartedAt;
   if (!selected) {
     await page.keyboard.press("Escape").catch(() => undefined);
     const reopenConfirmStartedAt = Date.now();
     await openSaveToPlaylistPanel(page, videoUrl, authCheck);
-    const reopenedButton = page
-      .locator(PLAYLIST_BUTTON_SELECTOR)
-      .filter({ hasText: playlistName })
-      .first();
+    const reopenedButton = await getPlaylistButtonForTarget(page, target);
     const reopenedPressed = await reopenedButton.getAttribute("aria-pressed").catch(() => null);
     await page.keyboard.press("Escape").catch(() => undefined);
     const reopenConfirmMs = Date.now() - reopenConfirmStartedAt;
 
     if (reopenedPressed !== "true") {
-      throw new Error(`Playlist '${playlistName}' did not become selected after clicking`);
+      throw new Error(`Playlist '${target.title}' did not become selected after clicking`);
     }
 
     return {
@@ -206,15 +214,11 @@ export async function ensureVideoSavedToPlaylist(
   };
 }
 
-async function waitForPlaylistSelection(page: Page, playlistName: string): Promise<boolean> {
+async function waitForPlaylistSelection(page: Page, target: PlaylistTarget): Promise<boolean> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    const attr = await page
-      .locator(PLAYLIST_BUTTON_SELECTOR)
-      .filter({ hasText: playlistName })
-      .first()
-      .getAttribute("aria-pressed")
-      .catch(() => null);
+    const playlistButton = await getPlaylistButtonForTarget(page, target).catch(() => null);
+    const attr = await playlistButton?.getAttribute("aria-pressed").catch(() => null);
 
     if (attr === "true") {
       return true;
@@ -224,6 +228,51 @@ async function waitForPlaylistSelection(page: Page, playlistName: string): Promi
   }
 
   return false;
+}
+
+async function getPlaylistButtonForTarget(page: Page, target: PlaylistTarget) {
+  const options = await listVisiblePlaylistOptions(page);
+  const match = findMatchingPlaylistOption(options, target);
+  if (!match) {
+    throw new Error(buildPlaylistNotFoundMessage(target));
+  }
+
+  return page.locator(PLAYLIST_BUTTON_SELECTOR).nth(match.domIndex);
+}
+
+function findMatchingPlaylistOption(options: PlaylistOption[], target: PlaylistTarget): PlaylistOption | null {
+  const exactTitleMatches = options.filter((option) => option.title === target.title);
+  const visibilityFiltered =
+    target.visibility !== undefined && target.visibility !== null
+      ? exactTitleMatches.filter((option) => option.visibility === target.visibility)
+      : exactTitleMatches;
+
+  if (visibilityFiltered.length === 1) {
+    return visibilityFiltered[0] ?? null;
+  }
+
+  if (visibilityFiltered.length > 1) {
+    throw new Error(buildAmbiguousPlaylistMessage(target, visibilityFiltered));
+  }
+
+  if (target.visibility !== undefined && target.visibility !== null && exactTitleMatches.length > 1) {
+    throw new Error(buildAmbiguousPlaylistMessage(target, exactTitleMatches));
+  }
+
+  return exactTitleMatches.length === 1 ? (exactTitleMatches[0] ?? null) : null;
+}
+
+function buildPlaylistNotFoundMessage(target: PlaylistTarget): string {
+  const visibilitySuffix = target.visibility ? ` (${target.visibility})` : "";
+  const idSuffix = target.playlistId ? ` [${target.playlistId}]` : "";
+  return `Playlist '${target.title}'${visibilitySuffix}${idSuffix} was not found in the save panel`;
+}
+
+function buildAmbiguousPlaylistMessage(target: PlaylistTarget, options: PlaylistOption[]): string {
+  const renderedOptions = options.map((option) => `${option.title} (${option.visibility ?? "Unknown"})`).join(", ");
+  const visibilitySuffix = target.visibility ? ` with visibility '${target.visibility}'` : "";
+  const idSuffix = target.playlistId ? ` [${target.playlistId}]` : "";
+  return `Playlist '${target.title}'${visibilitySuffix}${idSuffix} matched multiple save-panel options: ${renderedOptions}`;
 }
 
 async function findVisibleSaveMenuItem(page: Page) {

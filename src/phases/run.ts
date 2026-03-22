@@ -6,6 +6,7 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
 import { writeRunSummary } from "../services/summaryWriter.js";
+import { appendTargetPlaylistArgs, getTargetPlaylistRequest } from "../services/targetPlaylist.js";
 import { readVerificationReport } from "../services/verificationReport.js";
 import { evaluateWorkflowProductionReadiness } from "../services/workflowReadiness.js";
 import { readWorkflowChildSummaries } from "../services/workflowSummary.js";
@@ -24,6 +25,7 @@ interface GlobalOptions {
 
 interface RunWorkflowOptions extends GlobalOptions {
   targetPlaylist?: string;
+  targetPlaylistId?: string;
   maxItems?: string;
   milestoneEvery?: string;
   sourceRunId?: string;
@@ -129,7 +131,9 @@ export async function runWorkflow(command: Command): Promise<void> {
   const ctx = createRunContext(command, "run");
   const options = getRunOptions(command);
   const globalArgs = buildGlobalArgs(options);
-  const targetPlaylist = options.targetPlaylist?.trim() || "Old Watch";
+  const targetRequest = getTargetPlaylistRequest(options);
+  const targetPlaylist = targetRequest.targetPlaylist;
+  const targetPlaylistId = targetRequest.targetPlaylistId;
   const setupRunId = `${ctx.runId}-setup`;
   const inventoryRunId = `${ctx.runId}-inventory`;
   const copyRunId = `${ctx.runId}-copy`;
@@ -138,6 +142,7 @@ export async function runWorkflow(command: Command): Promise<void> {
     capturedAt: new Date().toISOString(),
     phase: "run",
     targetPlaylist,
+    targetPlaylistId,
     workflowRunId: ctx.runId,
     setupRunId: options.skipSetup ? null : setupRunId,
     inventoryRunId: options.sourceRunId ? null : inventoryRunId,
@@ -152,6 +157,7 @@ export async function runWorkflow(command: Command): Promise<void> {
   try {
     ctx.logEvent("run", "info", "run.plan", "Starting orchestrated non-destructive workflow", {
       targetPlaylist,
+      targetPlaylistId,
       setupRunId: summary.setupRunId,
       inventoryRunId: summary.inventoryRunId,
       sourceRunId: summary.sourceRunId,
@@ -166,7 +172,11 @@ export async function runWorkflow(command: Command): Promise<void> {
         globalArgs,
         childRunId: setupRunId,
         phase: "setup",
-        phaseArgs: ["--target-playlist", targetPlaylist]
+        phaseArgs: (() => {
+          const args: string[] = [];
+          appendTargetPlaylistArgs(args, targetRequest);
+          return args;
+        })()
       });
       summary.completedPhases.push("setup");
     }
@@ -185,7 +195,9 @@ export async function runWorkflow(command: Command): Promise<void> {
       summary.completedPhases.push("inventory");
     }
 
-    const copyArgs: string[] = ["--target-playlist", targetPlaylist, "--source-run-id", summary.sourceRunId];
+    const copyArgs: string[] = [];
+    appendTargetPlaylistArgs(copyArgs, targetRequest);
+    copyArgs.push("--source-run-id", summary.sourceRunId);
     appendOptionalArg(copyArgs, "--max-items", options.maxItems);
     appendOptionalArg(copyArgs, "--milestone-every", options.milestoneEvery);
     appendOptionalArg(copyArgs, "--max-attempts", options.maxAttempts);
@@ -205,7 +217,9 @@ export async function runWorkflow(command: Command): Promise<void> {
     assertCopyChildSucceeded(ctx.rootDir, copyRunId);
     summary.completedPhases.push("copy");
 
-    const verifyArgs: string[] = ["--target-playlist", targetPlaylist, "--source-run-id", summary.sourceRunId];
+    const verifyArgs: string[] = [];
+    appendTargetPlaylistArgs(verifyArgs, targetRequest);
+    verifyArgs.push("--source-run-id", summary.sourceRunId);
     appendOptionalArg(verifyArgs, "--max-items", options.maxItems);
     runChildPhase({
       rootDir: ctx.rootDir,

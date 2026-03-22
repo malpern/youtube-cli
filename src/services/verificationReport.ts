@@ -8,6 +8,7 @@ export interface VerificationReport {
   sourceSnapshotRunId: string;
   sourceSnapshotPath: string;
   targetPlaylist: string;
+  targetPlaylistId?: string;
   passed: boolean;
   targetPassed: boolean;
   driftPassed: boolean;

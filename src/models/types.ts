@@ -1,4 +1,17 @@
-export type Phase = "login" | "doctor" | "setup" | "probe-selectors" | "inventory" | "copy" | "verify" | "repair" | "delete" | "performance" | "run";
+export type Phase =
+  | "login"
+  | "doctor"
+  | "setup"
+  | "probe-selectors"
+  | "inventory"
+  | "copy"
+  | "verify"
+  | "repair"
+  | "delete"
+  | "performance"
+  | "run"
+  | "playlists"
+  | "move";
 
 export interface RunConfig {
   profileDir: string | undefined;
@@ -198,4 +211,12 @@ export interface FullRunPreflightReport {
     p95Seconds: number | null;
     p95Hours: number | null;
   };
+}
+
+export interface WatchLaterCapacitySummary {
+  videoCount: number | null;
+  maxItems: number;
+  remainingCapacity: number | null;
+  nearCapacity: boolean;
+  atCapacity: boolean;
 }

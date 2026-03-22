@@ -13,7 +13,9 @@
     "dev": "tsx src/cli.ts",
     "doctor": "tsx src/cli.ts doctor",
     "probe": "tsx src/cli.ts probe-selectors",
-    "build": "tsc -p tsconfig.json",
+    "test:live-dom": "tsx src/browser/youtube/liveDomSmoke.ts",
+    "build:compile": "tsc -p tsconfig.json",
+    "build": "npm run typecheck && npm test && npm run test:live-dom && npm run build:compile",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

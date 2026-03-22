@@ -6,11 +6,12 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { loadPlaylistInventory, loadWatchLaterInventory, type InventoryOptions } from "../browser/youtube/inventory.js";
-import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
+import { resolvePlaylistFeedSummary, resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
 import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, computeInventoryFingerprint } from "../services/sourceSnapshot.js";
 import { ambiguousSourceItemMismatches, partitionSourceItems } from "../services/sourceItemPolicy.js";
 import { analyzeInventoryDiscrepancies, compareOrderedPrefix, discrepanciesAreClear, evaluateVerificationCounts, findMatchingWindowStart } from "../services/verification.js";
 import { buildProductionDeleteAuthorization, evaluateDeletionEligibility } from "../services/verificationGate.js";
+import { getTargetPlaylistRequest } from "../services/targetPlaylist.js";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -25,11 +26,6 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
-function getTargetPlaylist(command: Command): string {
-  const opts = command.opts<{ targetPlaylist?: string }>();
-  return opts.targetPlaylist?.trim() || "Old Watch";
-}
-
 export async function runVerify(command: Command): Promise<void> {
   const ctx = createRunContext(command, "verify");
   const localOptions = command.opts<{
@@ -37,9 +33,12 @@ export async function runVerify(command: Command): Promise<void> {
     maxNoGrowthPasses?: string;
     settleMs?: string;
     targetPlaylist?: string;
+    targetPlaylistId?: string;
     sourceRunId?: string;
   }>();
-  const targetPlaylist = getTargetPlaylist(command);
+  const targetRequest = getTargetPlaylistRequest(localOptions);
+  const targetPlaylist = targetRequest.targetPlaylist;
+  const targetPlaylistId = targetRequest.targetPlaylistId;
   const watchLaterUrl = `${ctx.config.youtubeBaseUrl}/playlist?list=WL`;
   const verificationPath = path.join(ctx.artifacts.runDir, "verification.json");
   const subsetLimit = localOptions.maxItems ? parsePositiveInt(localOptions.maxItems, 0) : undefined;
@@ -82,9 +81,17 @@ export async function runVerify(command: Command): Promise<void> {
       ambiguousCount: partitionedSource.ambiguousItems.length
     });
 
-    const targetPlaylistUrl = await resolvePlaylistPageUrlByName(session.page, ctx.config.youtubeBaseUrl, targetPlaylist);
+    const targetSummary = targetPlaylistId
+      ? await resolvePlaylistFeedSummary(session.page, ctx.config.youtubeBaseUrl, {
+          playlistId: targetPlaylistId,
+          playlistName: targetPlaylist
+        })
+      : null;
+    const resolvedTargetPlaylist = targetSummary?.title ?? targetPlaylist;
+    const targetPlaylistUrl =
+      targetSummary?.playlistUrl ?? (await resolvePlaylistPageUrlByName(session.page, ctx.config.youtubeBaseUrl, targetPlaylist));
     if (!targetPlaylistUrl) {
-      throw new Error(`Target playlist '${targetPlaylist}' was not found on the Playlists feed page`);
+      throw new Error(`Target playlist '${targetPlaylist}'${targetPlaylistId ? ` [${targetPlaylistId}]` : ""} was not found on the Playlists feed page`);
     }
 
     const targetInventory = await loadPlaylistInventory(session.page, targetPlaylistUrl, {
@@ -146,7 +153,7 @@ export async function runVerify(command: Command): Promise<void> {
     const productionDeleteAuthorization = buildProductionDeleteAuthorization({
       verificationRunId: ctx.runId,
       sourceSnapshotRunId: sourceSnapshot.runId,
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
       subsetLimit: subsetLimit ?? null,
       sourceSnapshotMetadataComplete: sourceSnapshot.metadataComplete,
       sourceSnapshotBounded: sourceSnapshot.bounded,
@@ -158,7 +165,8 @@ export async function runVerify(command: Command): Promise<void> {
       reportComplete: true,
       capturedAt: new Date().toISOString(),
       sourcePlaylist: "Watch Later",
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       targetPlaylistUrl,
       sourceSnapshotRunId: sourceSnapshot.runId,
       sourceSnapshotPath: snapshotPath,
@@ -228,7 +236,8 @@ export async function runVerify(command: Command): Promise<void> {
       deletionEligible: deletionEligibility.eligible,
       deletionBlockedBy: deletionEligibility.reasons,
       productionDeleteAuthorized: productionDeleteAuthorization.authorized,
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       targetPlaylistUrl
     });
 
@@ -262,13 +271,14 @@ export async function runVerify(command: Command): Promise<void> {
       deletionEligible: deletionEligibility.eligible,
       deletionBlockedBy: deletionEligibility.reasons,
       productionDeleteAuthorized: productionDeleteAuthorization.authorized,
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       targetPlaylistUrl
     });
     ctx.db.upsertRunState("verify", passed ? "complete" : "failed");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    ctx.logEvent("verify", "error", "verify.failed", "Verification failed", { error: message, targetPlaylist });
+    ctx.logEvent("verify", "error", "verify.failed", "Verification failed", { error: message, targetPlaylist, targetPlaylistId });
     ctx.db.upsertRunState("verify", "failed");
     throw error;
   } finally {

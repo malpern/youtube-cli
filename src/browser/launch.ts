@@ -4,6 +4,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 
 import type { RunConfig } from "../models/types.js";
 
+const AUTOMATION_WINDOW_NAME = "__youtube_watchlist_automation__";
+
 export interface BrowserSession {
   browser?: Browser;
   context: BrowserContext;
@@ -15,14 +17,13 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
   if (config.browserCdpUrl) {
     const browser = await chromium.connectOverCDP(config.browserCdpUrl);
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = await context.newPage();
+    const page = await resolveAutomationPage(context);
 
     return {
       browser,
       context,
       page,
       close: async () => {
-        await page.close().catch(() => undefined);
         await browser.close().catch(() => undefined);
       }
     };
@@ -61,4 +62,35 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
     page,
     close: async () => browser.close()
   };
+}
+
+async function resolveAutomationPage(context: BrowserContext): Promise<Page> {
+  const existingPages = context.pages();
+
+  for (const page of existingPages) {
+    const windowName = await readWindowName(page);
+    if (windowName === AUTOMATION_WINDOW_NAME) {
+      return page;
+    }
+  }
+
+  const page = await context.newPage();
+  await markAutomationPage(page);
+  return page;
+}
+
+async function readWindowName(page: Page): Promise<string | null> {
+  try {
+    return await page.evaluate(() => window.name || null);
+  } catch {
+    return null;
+  }
+}
+
+async function markAutomationPage(page: Page): Promise<void> {
+  await page
+    .evaluate((windowName) => {
+      window.name = windowName;
+    }, AUTOMATION_WINDOW_NAME)
+    .catch(() => undefined);
 }

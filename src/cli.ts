@@ -13,6 +13,8 @@ import { runCopyPerformance } from "./phases/copyPerformance.js";
 import { runPreflight } from "./phases/preflight.js";
 import { runDelete } from "./phases/delete.js";
 import { runWorkflow } from "./phases/run.js";
+import { runPlaylists } from "./phases/playlists.js";
+import { runMove } from "./phases/move.js";
 import { runStatus } from "./phases/status.js";
 
 const program = new Command();
@@ -42,9 +44,10 @@ program
 program
   .command("doctor")
   .description("Validate local environment, browser session config, and YouTube auth state")
+  .option("--json", "Emit machine-readable JSON for app integrations")
   .action(async function action() {
     await runDoctor(this);
-  });
+});
 
 program
   .command("status")
@@ -59,6 +62,7 @@ program
   .command("setup")
   .description("Ensure the target playlist exists by using the save-to-playlist UI on a Watch Later video")
   .option("--target-playlist <name>", "Playlist name to ensure exists", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to target exactly when selecting an existing playlist")
   .action(async function action() {
     await runSetup(this);
   });
@@ -84,6 +88,7 @@ program
   .command("copy")
   .description("Copy source snapshot items into the target playlist using the watch-page save panel")
   .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to target exactly when selecting an existing playlist")
   .option("--source-run-id <id>", "Run id containing the inventory snapshot to use as the source of truth")
   .option("--start-index <index>", "Start processing at this source index", "1")
   .option("--max-items <count>", "Stop after processing this many snapshot rows")
@@ -104,6 +109,7 @@ program
   .command("verify")
   .description("Compare the target playlist and live Watch Later against a saved source snapshot")
   .option("--target-playlist <name>", "Playlist name to verify", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to verify exactly on the Playlists feed page")
   .option("--source-run-id <id>", "Run id containing the inventory snapshot to use as the source of truth")
   .option("--max-items <count>", "Compare only the first N source snapshot rows")
   .option("--max-no-growth-passes <count>", "Number of no-growth scroll passes before stopping", "2")
@@ -116,6 +122,7 @@ program
   .command("repair")
   .description("Retry target-side verification failures from a saved verification report")
   .option("--target-playlist <name>", "Playlist name to repair into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to target exactly when selecting an existing playlist")
   .option("--verification-run-id <id>", "Run id containing the verification report to repair from")
   .option("--max-items <count>", "Stop after repairing this many planned items")
   .option("--milestone-every <count>", "Emit a repair progress summary every N processed items", "5")
@@ -170,9 +177,18 @@ program
   });
 
 program
+  .command("playlists")
+  .description("Open the save panel on a Watch Later video and return the currently visible playlists")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runPlaylists(this);
+  });
+
+program
   .command("run")
   .description("Run the non-destructive setup, inventory, copy, and verify workflow")
   .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to target exactly when selecting an existing playlist")
   .option("--max-items <count>", "Limit the workflow to the first N source items")
   .option("--milestone-every <count>", "Emit copy progress milestones every N processed items", "5")
   .option("--max-attempts <count>", "Maximum attempts per copy item inside the workflow", "3")
@@ -186,6 +202,22 @@ program
   .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
   .action(async function action() {
     await runWorkflow(this);
+  });
+
+program
+  .command("move")
+  .description("Run the full move workflow: setup, inventory, copy, verify, then delete from Watch Later")
+  .option("--target-playlist <name>", "Playlist name to move into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to target exactly when selecting an existing playlist")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
+  .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
+  .option("--development-max-items <count>", "Development-only bounded mode: copy and verify only, do not delete from Watch Later")
+  .option("--max-attempts <count>", "Maximum attempts per mutation item", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between mutation attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between mutation attempts", "8000")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runMove(this);
   });
 
 await program.parseAsync(process.argv);

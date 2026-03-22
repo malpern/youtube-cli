@@ -17,6 +17,7 @@ import { planCopyResume } from "../services/resumePlanner.js";
 import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath } from "../services/sourceSnapshot.js";
 import { selectSourceItems } from "../services/sourceSelection.js";
 import { assessSourceItemPolicy, partitionSourceItems } from "../services/sourceItemPolicy.js";
+import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -29,11 +30,6 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   }
 
   return Math.floor(parsed);
-}
-
-function getTargetPlaylist(command: Command): string {
-  const opts = command.opts<{ targetPlaylist?: string }>();
-  return opts.targetPlaylist?.trim() || "Old Watch";
 }
 
 function formatRate(processedCount: number, startedAtMs: number): number {
@@ -64,6 +60,7 @@ export async function runCopy(command: Command): Promise<void> {
   const localOptions = command.opts<{
     maxItems?: string;
     targetPlaylist?: string;
+    targetPlaylistId?: string;
     milestoneEvery?: string;
     sourceRunId?: string;
     startIndex?: string;
@@ -76,7 +73,9 @@ export async function runCopy(command: Command): Promise<void> {
     cooldownEvery?: string;
     cooldownMs?: string;
   }>();
-  const targetPlaylist = getTargetPlaylist(command);
+  const targetRequest = getTargetPlaylistRequest(localOptions);
+  const targetPlaylist = targetRequest.targetPlaylist;
+  const targetPlaylistId = targetRequest.targetPlaylistId;
   const milestoneEvery = parsePositiveInt(localOptions.milestoneEvery, 5);
   const retryPolicy = resolveMutationRetryPolicy(localOptions);
   const pacingPolicy = resolveMutationPacingPolicy(localOptions);
@@ -142,6 +141,8 @@ export async function runCopy(command: Command): Promise<void> {
     let failedCount = resumePlan.failedCount;
 
     await assertAuthenticatedYouTubeSession(session.page, ctx.config, "copy.start", { navigate: true });
+    const target = await resolveTargetPlaylistForSavePanel(session.page, ctx.config.youtubeBaseUrl, targetRequest);
+    const resolvedTargetPlaylist = target.title;
 
     for (const [index, item] of resumePlan.remainingItems.entries()) {
       try {
@@ -149,7 +150,7 @@ export async function runCopy(command: Command): Promise<void> {
           ctx,
           item,
           page: session.page,
-          targetPlaylist,
+          target,
           operationsPath,
           retryPolicy,
           onSaved: () => {
@@ -180,7 +181,8 @@ export async function runCopy(command: Command): Promise<void> {
             phase: "copy",
             error,
             payload: {
-              targetPlaylist,
+              targetPlaylist: resolvedTargetPlaylist,
+              targetPlaylistId,
               sourceSnapshotRunId: sourceSnapshot.runId,
               sourceSnapshotPath: snapshotPath,
               startIndex,
@@ -218,13 +220,15 @@ export async function runCopy(command: Command): Promise<void> {
           skippedCount,
           failedCount,
           rateItemsPerSecond: formatRate(processedCount, startedAtMs),
-          targetPlaylist,
+          targetPlaylist: resolvedTargetPlaylist,
+          targetPlaylistId,
           sourceSnapshotRunId: sourceSnapshot.runId
         });
       }
 
       ctx.saveCheckpoint("copy", {
-        targetPlaylist,
+        targetPlaylist: resolvedTargetPlaylist,
+        targetPlaylistId,
         sourceSnapshotRunId: sourceSnapshot.runId,
         startIndex,
         sourceSnapshotPath: snapshotPath,
@@ -248,14 +252,16 @@ export async function runCopy(command: Command): Promise<void> {
           jitterMs: pacingDelay.jitterMs,
           cooldownMs: pacingDelay.cooldownMs,
           totalDelayMs: pacingDelay.totalDelayMs,
-          targetPlaylist
+          targetPlaylist: resolvedTargetPlaylist,
+          targetPlaylistId
         });
         await session.page.waitForTimeout(pacingDelay.totalDelayMs);
       }
     }
 
     ctx.logEvent("copy", "info", "copy.complete", "Copy pass completed", {
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       total: sourceItems.length,
       savedCount,
       alreadySavedCount,
@@ -278,6 +284,7 @@ export async function runCopy(command: Command): Promise<void> {
         error,
         payload: {
           targetPlaylist,
+          targetPlaylistId,
           sourceSnapshotRunId: sourceSnapshot.runId,
           sourceSnapshotPath: snapshotPath,
           startIndex,
@@ -298,7 +305,7 @@ export async function runCopy(command: Command): Promise<void> {
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    ctx.logEvent("copy", "error", "copy.failed", "Copy pass failed", { error: message, targetPlaylist });
+    ctx.logEvent("copy", "error", "copy.failed", "Copy pass failed", { error: message, targetPlaylist, targetPlaylistId });
     ctx.db.upsertRunState("copy", "failed");
     throw error;
   } finally {
@@ -310,7 +317,7 @@ async function processCopyItem(args: {
   ctx: ReturnType<typeof createRunContext>;
   item: InventoryItem;
   page: import("playwright").Page;
-  targetPlaylist: string;
+  target: import("../browser/youtube/saveToPlaylist.js").PlaylistTarget;
   operationsPath: string;
   retryPolicy: ReturnType<typeof resolveMutationRetryPolicy>;
   onSaved: () => void;
@@ -319,7 +326,7 @@ async function processCopyItem(args: {
   onAmbiguousBlocked: () => void;
   onRetryExhausted: () => void;
 }): Promise<void> {
-  const { ctx, item, page, targetPlaylist, operationsPath, onSaved } = args;
+  const { ctx, item, page, target, operationsPath, onSaved } = args;
 
   const policy = assessSourceItemPolicy(item);
   if (policy.policy === "expected-non-copyable") {
@@ -337,7 +344,8 @@ async function processCopyItem(args: {
       sourceIndex: item.sourceIndex,
       title: item.title,
       reason: policy.reason,
-      targetPlaylist
+      targetPlaylist: target.title,
+      targetPlaylistId: target.playlistId ?? null
     });
     args.onExpectedNonCopyable();
     return;
@@ -358,7 +366,8 @@ async function processCopyItem(args: {
       sourceIndex: item.sourceIndex,
       title: item.title,
       reason: policy.reason,
-      targetPlaylist
+      targetPlaylist: target.title,
+      targetPlaylistId: target.playlistId ?? null
     });
     args.onAmbiguousBlocked();
     return;
@@ -375,7 +384,7 @@ async function processCopyItem(args: {
       run: async () => {
         await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.before`);
         try {
-          const response = await ensureVideoSavedToPlaylist(page, videoUrl, targetPlaylist, async () => {
+          const response = await ensureVideoSavedToPlaylist(page, videoUrl, target, async () => {
             await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.open-save-panel`);
           });
           await assertAuthenticatedYouTubeSession(page, ctx.config, `copy.item.${item.sourceIndex}.after`);
@@ -393,7 +402,8 @@ async function processCopyItem(args: {
           nextAttempt,
           delayMs,
           error: error.message,
-          targetPlaylist
+          targetPlaylist: target.title,
+          targetPlaylistId: target.playlistId ?? null
         });
       },
       sleep: async (delayMs) => {
@@ -418,7 +428,8 @@ async function processCopyItem(args: {
       result: response.result,
       attempts,
       timings: response.timings,
-      targetPlaylist
+      targetPlaylist: target.title,
+      targetPlaylistId: target.playlistId ?? null
     });
 
     if (response.result === "saved") {
@@ -447,7 +458,8 @@ async function processCopyItem(args: {
       error: message,
       attempts: args.retryPolicy.maxAttempts,
       ...(fs.existsSync(screenshotPath) ? { screenshotPath } : {}),
-      targetPlaylist
+      targetPlaylist: target.title,
+      targetPlaylistId: target.playlistId ?? null
     });
     args.onRetryExhausted();
   }

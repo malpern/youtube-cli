@@ -7,8 +7,18 @@ import { launchBrowserSession } from "../browser/launch.js";
 import { createRunContext } from "../app/runContext.js";
 import type { DoctorCheck } from "../models/types.js";
 
+interface DoctorOptions {
+  json?: boolean;
+}
+
+function writeJson(payload: Record<string, unknown>): void {
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
 export async function runDoctor(command: Command): Promise<void> {
-  const ctx = createRunContext(command, "doctor");
+  const options = command.opts<DoctorOptions>();
+  const json = Boolean(options.json);
+  const ctx = createRunContext(command, "doctor", json ? { consoleStream: process.stderr } : {});
   const checks: DoctorCheck[] = [];
 
   checks.push({
@@ -94,6 +104,14 @@ export async function runDoctor(command: Command): Promise<void> {
 
   ctx.saveCheckpoint("doctor", { checks });
   ctx.db.upsertRunState("doctor", failedChecks.length > 0 ? "failed" : "complete");
+
+  if (json) {
+    writeJson({
+      ok: failedChecks.length === 0,
+      runId: ctx.runId,
+      checks
+    });
+  }
 
   if (failedChecks.length > 0 && ctx.config.stopOnAccountMismatch) {
     process.exitCode = 1;
