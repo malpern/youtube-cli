@@ -272,7 +272,11 @@ function buildAmbiguousPlaylistMessage(target: PlaylistTarget, options: Playlist
   const renderedOptions = options.map((option) => `${option.title} (${option.visibility ?? "Unknown"})`).join(", ");
   const visibilitySuffix = target.visibility ? ` with visibility '${target.visibility}'` : "";
   const idSuffix = target.playlistId ? ` [${target.playlistId}]` : "";
-  return `Playlist '${target.title}'${visibilitySuffix}${idSuffix} matched multiple save-panel options: ${renderedOptions}`;
+  const idLimitation =
+    target.playlistId
+      ? " The YouTube save panel does not expose playlist ids in its DOM, so the selection cannot be disambiguated beyond title and visibility."
+      : "";
+  return `Playlist '${target.title}'${visibilitySuffix}${idSuffix} matched multiple save-panel options: ${renderedOptions}.${idLimitation}`;
 }
 
 async function findVisibleSaveMenuItem(page: Page) {

@@ -73,6 +73,8 @@ Ensure the target playlist exists:
 npx tsx src/cli.ts setup --browser-cdp-url http://127.0.0.1:9222 --target-playlist "Old Watch"
 ```
 
+If you know the playlist id, you can also pass `--target-playlist-id`. The CLI will resolve that id on the Playlists feed first, then try to select the matching save-panel row by title and visibility. YouTube's save panel does not expose playlist ids in its DOM, so duplicate rows with the same title and visibility still fail closed as ambiguous.
+
 Copy from a specific source snapshot first:
 
 ```bash

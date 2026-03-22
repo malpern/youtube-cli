@@ -8,6 +8,7 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { listPlaylistFeedSummaries } from "../browser/youtube/playlistDiscovery.js";
 import { listVisiblePlaylistOptions, openSaveToPlaylistPanel } from "../browser/youtube/saveToPlaylist.js";
+import { buildPlaylistMetadataIndex, resolvePlaylistMetadata } from "../services/playlistMetadata.js";
 
 interface PlaylistsOptions {
   json?: boolean;
@@ -162,58 +163,4 @@ export async function runPlaylists(command: Command): Promise<void> {
   } finally {
     await session.close();
   }
-}
-
-interface PlaylistMetadata {
-  playlistId: string | null;
-  videoCount: number | null;
-}
-
-function buildPlaylistMetadataIndex(
-  summaries: Array<{ playlistId: string | null; title: string; visibility: string | null; videoCount: number | null }>
-): {
-  byExactKey: Map<string, PlaylistMetadata>;
-  byTitle: Map<string, PlaylistMetadata>;
-} {
-  const byExactKey = new Map<string, PlaylistMetadata>();
-  const byTitle = new Map<string, PlaylistMetadata>();
-
-  for (const summary of summaries) {
-    const exactKey = makePlaylistLookupKey(summary.title, summary.visibility);
-    if (!byExactKey.has(exactKey)) {
-      byExactKey.set(exactKey, {
-        playlistId: summary.playlistId,
-        videoCount: summary.videoCount
-      });
-    }
-
-    if (!byTitle.has(summary.title)) {
-      byTitle.set(summary.title, {
-        playlistId: summary.playlistId,
-        videoCount: summary.videoCount
-      });
-    }
-  }
-
-  return { byExactKey, byTitle };
-}
-
-function resolvePlaylistMetadata(
-  counts: {
-    byExactKey: Map<string, PlaylistMetadata>;
-    byTitle: Map<string, PlaylistMetadata>;
-  },
-  title: string,
-  visibility: string | null
-): PlaylistMetadata | null {
-  const exactKey = makePlaylistLookupKey(title, visibility);
-  if (counts.byExactKey.has(exactKey)) {
-    return counts.byExactKey.get(exactKey) ?? null;
-  }
-
-  return counts.byTitle.get(title) ?? null;
-}
-
-function makePlaylistLookupKey(title: string, visibility: string | null): string {
-  return `${title}\u0000${visibility ?? ""}`;
 }

@@ -103,10 +103,12 @@ async function main(): Promise<void> {
 
   const runCheck = async (
     name: string,
-    fn: () => Promise<Record<string, unknown> | undefined>
+    fn: (page: import("playwright").Page) => Promise<Record<string, unknown> | undefined>
   ): Promise<void> => {
+    const page = await session.context.newPage();
+
     try {
-      const details = await fn();
+      const details = await fn(page);
       results.push({
         name,
         ok: true,
@@ -127,17 +129,19 @@ async function main(): Promise<void> {
         `${sanitizeName(name) || "live-dom-smoke-failure"}.png`
       );
 
-      await session.page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
       persistResults();
       console.error(`FAIL ${name}: ${message}`);
       console.error(`Failure screenshot: ${screenshotPath}`);
       throw error;
+    } finally {
+      await page.close().catch(() => undefined);
     }
   };
 
   try {
-    await runCheck("youtube-auth", async () => {
-      const snapshot = await captureAccountSnapshot(session.page, config.youtubeBaseUrl);
+    await runCheck("youtube-auth", async (page) => {
+      const snapshot = await captureAccountSnapshot(page, config.youtubeBaseUrl);
 
       assertCondition(snapshot.signedIn, "Expected an authenticated YouTube session, but the browser looked signed out.");
       assertCondition(snapshot.accountLabel, "Expected a visible signed-in account label on YouTube.");
@@ -155,8 +159,8 @@ async function main(): Promise<void> {
       };
     });
 
-    await runCheck("watch-later-selectors", async () => {
-      const report = await probeWatchLaterSelectors(session.page, watchLaterUrl);
+    await runCheck("watch-later-selectors", async (page) => {
+      const report = await probeWatchLaterSelectors(page, watchLaterUrl);
       const playlistVideoRendererCount = report.selectorCounts.playlistVideoRenderer ?? 0;
 
       assertCondition(
@@ -177,8 +181,8 @@ async function main(): Promise<void> {
       };
     });
 
-    await runCheck("watch-later-inventory", async () => {
-      const inventory = await loadWatchLaterInventory(session.page, watchLaterUrl, {
+    await runCheck("watch-later-inventory", async (page) => {
+      const inventory = await loadWatchLaterInventory(page, watchLaterUrl, {
         maxNoGrowthPasses: 1,
         settleMs: 750,
         maxItems: 12
@@ -204,27 +208,21 @@ async function main(): Promise<void> {
       };
     });
 
-    await runCheck("watch-page-save-panel", async () => {
+    await runCheck("watch-page-save-panel", async (page) => {
       assertCondition(state.sampleVideoUrl, "No sample Watch Later video URL was available for the save panel smoke test.");
 
-      const savePanelPage = await session.context.newPage();
+      const timings = await openSaveToPlaylistPanel(page, state.sampleVideoUrl);
 
-      try {
-        const timings = await openSaveToPlaylistPanel(savePanelPage, state.sampleVideoUrl);
+      const playlistOptions = await listVisiblePlaylistOptions(page);
+      assertCondition(playlistOptions.length > 0, "Watch-page Save panel opened, but no playlist options were visible.");
 
-        const playlistOptions = await listVisiblePlaylistOptions(savePanelPage);
-        assertCondition(playlistOptions.length > 0, "Watch-page Save panel opened, but no playlist options were visible.");
+      await page.keyboard.press("Escape").catch(() => undefined);
 
-        await savePanelPage.keyboard.press("Escape").catch(() => undefined);
-
-        return {
-          playlistOptionCount: playlistOptions.length,
-          firstPlaylistTitle: playlistOptions[0]?.title ?? null,
-          timings
-        };
-      } finally {
-        await savePanelPage.close().catch(() => undefined);
-      }
+      return {
+        playlistOptionCount: playlistOptions.length,
+        firstPlaylistTitle: playlistOptions[0]?.title ?? null,
+        timings
+      };
     });
 
     console.log("Live DOM smoke suite passed.");
