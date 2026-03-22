@@ -27,6 +27,7 @@ final class TransferViewModel {
     var verifyProgress = PhaseProgressSnapshot(phase: .verify)
     var deleteProgress = PhaseProgressSnapshot(phase: .delete)
     var latestResult: MoveResultPayload?
+    var currentToast: Toast?
     var authCheckResult = AuthCheckResult(
         isAuthenticated: true,
         title: "Signed in",
@@ -363,6 +364,7 @@ final class TransferViewModel {
             )
             if announce {
                 statusMessage = "Sign in to YouTube to continue."
+                currentToast = .warning("Could not verify YouTube authentication.")
             }
         }
         isCheckingAuthentication = false
@@ -382,6 +384,7 @@ final class TransferViewModel {
             } catch {
                 errorMessage = error.localizedDescription
                 statusMessage = "Could not open Google Chrome."
+                currentToast = .error("Could not open Google Chrome.")
             }
         }
     }
@@ -415,6 +418,7 @@ final class TransferViewModel {
             errorMessage = error.localizedDescription
             if announce {
                 statusMessage = "Playlist loading failed."
+                currentToast = .error("Playlist loading failed.")
             }
         }
     }
@@ -534,11 +538,13 @@ final class TransferViewModel {
         } catch is CancellationError {
             isRunningTransfer = false
             statusMessage = "Migration cancelled."
+            currentToast = .warning("Migration cancelled.")
             log.info("performMove: cancelled")
         } catch {
             isRunningTransfer = false
             errorMessage = error.localizedDescription
             statusMessage = "Migration failed."
+            currentToast = .error(error.localizedDescription)
             log.error("performMove: failed — \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -582,6 +588,7 @@ final class TransferViewModel {
             } else {
                 errorMessage = payload.errorMessage
                 statusMessage = payload.errorMessage ?? "Migration failed."
+                currentToast = .error(payload.errorMessage ?? "Migration failed.")
             }
         }
     }

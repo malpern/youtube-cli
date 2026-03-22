@@ -30,6 +30,7 @@ struct TransferView: View {
             alignment: .topLeading
         )
         .background(AppColors.mainSurfaceColor)
+        .toastOverlay(toast: $model.currentToast)
         .task {
             await model.loadPlaylistsIfNeeded()
         }
