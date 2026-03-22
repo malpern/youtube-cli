@@ -16,7 +16,7 @@ This document tracks ways to reduce visual noise on macOS without making the bro
 - [x] Add configurable window size, position, and viewport controls for Playwright-launched sessions so headed local runs can stay parked in a predictable footprint.
 - [x] Surface browser windowing behavior in `doctor` so operators can see when layout controls apply and when CDP mode ignores them.
 - [x] Document a low-disruption macOS workflow for headed local work and a headless workflow for release checks.
-- [ ] Add an optional helper script that launches a dedicated Chrome or Chrome Canary window with the project profile, remote debugging port, and recommended window bounds.
+- [x] Add an optional helper script that launches a dedicated Chrome or Chrome Canary window with the project profile, remote debugging port, and recommended window bounds.
 - [ ] Evaluate whether a separate automation-only browser app bundle is worth supporting for local smoke runs.
 - [ ] Evaluate whether the `playlists` inspection flow should move to a dedicated smoke context or headless-only path to reduce visible navigation churn during operator use.
 
@@ -29,6 +29,12 @@ Use `npm run build` for the normal fast path. It does not open a browser.
 ### Local headed diagnostics and smoke tests
 
 Use a dedicated Chrome or Chrome Canary profile, put that browser on its own macOS Space, and attach over CDP. This keeps the auth model reliable and isolates the visual noise from the user’s normal desktop.
+
+You can open that browser with:
+
+```bash
+npm run browser:open
+```
 
 CDP mode controls an already-running browser window, so native window size and position overrides from the CLI are intentionally ignored. Manage placement at launch time or with a dedicated Space.
 

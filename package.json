@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "doctor": "tsx src/cli.ts doctor",
+    "browser:open": "tsx src/tools/openAutomationBrowser.ts",
     "probe": "tsx src/cli.ts probe-selectors",
     "test:live-dom": "tsx src/browser/youtube/liveDomSmoke.ts",
     "build:compile": "tsc -p tsconfig.json",

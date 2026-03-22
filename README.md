@@ -38,6 +38,12 @@ Recommended authenticated development flow:
 3. Keep that browser open.
 4. Run CLI commands against `--browser-cdp-url http://127.0.0.1:9222`.
 
+You can launch the dedicated browser with:
+
+```bash
+npm run browser:open
+```
+
 Environment check:
 
 ```bash

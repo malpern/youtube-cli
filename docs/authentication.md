@@ -53,6 +53,12 @@ open -na "Google Chrome" --args \
   https://www.youtube.com
 ```
 
+Or use the repo helper, which applies the same pattern with the configured profile, CDP port, and window bounds:
+
+```bash
+npm run browser:open
+```
+
 On macOS, put that dedicated browser window on its own Space if you want to keep headed automation out of the user’s main desktop. This is more reliable than trying to hide or minimize the automation window while the CLI is driving it.
 
 After the browser is open and signed in, attach the CLI with:
