@@ -5,6 +5,7 @@ struct RealAuthService: AuthService {
     func checkAuthentication() async throws -> AuthCheckResult {
         let result = try await CLIProcessRunner.run(arguments: CLIBackendPaths.commonCLIArguments + ["doctor", "--json"])
         let payload = try JSONDecoder().decode(DoctorResponse.self, from: result.stdout)
+        try CLIAppContract.validate(payload, surface: .doctor)
         return buildResult(from: payload)
     }
 
@@ -54,7 +55,9 @@ struct RealAuthService: AuthService {
     }
 }
 
-private struct DoctorResponse: Decodable {
+private struct DoctorResponse: CLIAppContractPayload {
+    let appContractVersion: Int
+    let appContractSurface: String
     let ok: Bool
     let checks: [DoctorCheckPayload]
 }

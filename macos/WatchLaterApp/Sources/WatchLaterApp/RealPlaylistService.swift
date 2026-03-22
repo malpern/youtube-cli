@@ -6,6 +6,7 @@ struct RealPlaylistService: PlaylistService {
         let result = try await CLIProcessRunner.run(arguments: CLIBackendPaths.commonCLIArguments + ["playlists", "--json"])
         let decoder = JSONDecoder()
         let payload = try decoder.decode(PlaylistsResponse.self, from: result.stdout)
+        try CLIAppContract.validate(payload, surface: .playlists)
 
         guard payload.ok else {
             throw CLIProcessError(description: payload.error ?? fallbackErrorMessage(from: result))
@@ -38,7 +39,9 @@ struct RealPlaylistService: PlaylistService {
     }
 }
 
-private struct PlaylistsResponse: Decodable {
+private struct PlaylistsResponse: CLIAppContractPayload {
+    let appContractVersion: Int
+    let appContractSurface: String
     let ok: Bool
     let error: String?
     let watchLater: PlaylistsWatchLaterPayload?

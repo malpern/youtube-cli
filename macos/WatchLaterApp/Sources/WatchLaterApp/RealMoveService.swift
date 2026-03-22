@@ -111,6 +111,7 @@ struct RealMoveService: MoveService {
     private nonisolated static func decodeMoveEvent(from data: Data, state: MoveStreamState) throws -> MoveEvent {
         let decoder = JSONDecoder()
         let payload = try decoder.decode(MoveStreamPayload.self, from: data)
+        try CLIAppContract.validate(payload, surface: .move)
 
         switch payload.type {
         case "started":
@@ -259,7 +260,9 @@ private final class MoveStreamState: @unchecked Sendable {
     }
 }
 
-private struct MoveStreamPayload: Decodable {
+private struct MoveStreamPayload: CLIAppContractPayload {
+    let appContractVersion: Int
+    let appContractSurface: String
     let type: String
     let ok: Bool?
     let runId: String?
