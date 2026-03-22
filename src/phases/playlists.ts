@@ -75,14 +75,15 @@ export async function runPlaylists(command: Command): Promise<void> {
   const outputPath = path.join(ctx.artifacts.runDir, "playlists.json");
   const screenshotPath = path.join(ctx.artifacts.screenshotsDir, "playlists-save-panel.png");
   const session = await launchBrowserSession(ctx.config);
+  const inspectionPage = await session.context.newPage();
 
   try {
-    const seedVideoUrl = await getFirstWatchLaterVideoUrl(session.page, watchLaterUrl);
-    const watchLater = await getWatchLaterCapacitySummary(session.page);
-    const playlistFeedSummaries = await listPlaylistFeedSummaries(session.page, ctx.config.youtubeBaseUrl);
+    const seedVideoUrl = await getFirstWatchLaterVideoUrl(inspectionPage, watchLaterUrl);
+    const watchLater = await getWatchLaterCapacitySummary(inspectionPage);
+    const playlistFeedSummaries = await listPlaylistFeedSummaries(inspectionPage, ctx.config.youtubeBaseUrl);
     const playlistMetadata = buildPlaylistMetadataIndex(playlistFeedSummaries);
-    await openSaveToPlaylistPanel(session.page, seedVideoUrl);
-    const playlists = (await listVisiblePlaylistOptions(session.page))
+    await openSaveToPlaylistPanel(inspectionPage, seedVideoUrl);
+    const playlists = (await listVisiblePlaylistOptions(inspectionPage))
       .map((playlist) => {
         const metadata = resolvePlaylistMetadata(playlistMetadata, playlist.title, playlist.visibility);
         return {
@@ -95,8 +96,8 @@ export async function runPlaylists(command: Command): Promise<void> {
       })
       .sort((left, right) => left.title.localeCompare(right.title));
 
-    await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
-    await session.page.keyboard.press("Escape").catch(() => undefined);
+    await inspectionPage.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
+    await inspectionPage.keyboard.press("Escape").catch(() => undefined);
 
     const payload = {
       ok: true,
@@ -138,7 +139,7 @@ export async function runPlaylists(command: Command): Promise<void> {
     console.log(`Discovered ${playlists.length} playlists in the save panel.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
+    await inspectionPage.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
     ctx.logEvent("playlists", "error", "playlists.failed", "Playlist discovery failed", {
       error: message,
       screenshotPath
@@ -161,6 +162,7 @@ export async function runPlaylists(command: Command): Promise<void> {
 
     throw error;
   } finally {
+    await inspectionPage.close().catch(() => undefined);
     await session.close();
   }
 }
