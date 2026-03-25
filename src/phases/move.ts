@@ -16,6 +16,7 @@ interface MoveOptions extends GlobalOptions {
   targetPlaylistId?: string;
   sourceRunId?: string;
   skipSetup?: boolean;
+  resume?: boolean;
   developmentMaxItems?: string;
   maxAttempts?: string;
   retryInitialDelayMs?: string;
@@ -410,7 +411,14 @@ export async function runMove(command: Command): Promise<void> {
     runArgs.push("--skip-setup");
   }
 
+  if (options.resume) {
+    runArgs.push("--resume");
+  }
+
   const deleteArgs = ["--verification-run-id", verifyRunId, "--confirm-delete"];
+  if (options.resume) {
+    deleteArgs.push("--resume");
+  }
   const summary = {
     capturedAt: new Date().toISOString(),
     phase: "move",
@@ -438,6 +446,7 @@ export async function runMove(command: Command): Promise<void> {
     });
     emitter.emit({
       type: "started",
+      runId: ctx.runId,
       targetPlaylist,
       targetPlaylistId,
       workflow: {

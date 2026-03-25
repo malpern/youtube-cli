@@ -14,7 +14,7 @@ struct MockMoveService: MoveService {
                     )
                     let targetPlaylist = destination.displayName
 
-                    continuation.yield(.started(targetPlaylist: targetPlaylist, workflow: workflow))
+                    continuation.yield(.started(runID: "mock-run-20260321", targetPlaylist: targetPlaylist, workflow: workflow))
 
                     try await emitPhase(.setup, into: continuation)
                     try await emitPhase(.inventory, into: continuation)

@@ -216,6 +216,7 @@ program
   .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
   .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
   .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
+  .option("--resume", "Resume from the last completed phase and pass --resume to the copy child")
   .action(async function action() {
     await runWorkflow(this);
   });
@@ -228,6 +229,7 @@ program
   .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
   .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
   .option("--development-max-items <count>", "Development-only bounded mode: copy and verify only, do not delete from Watch Later")
+  .option("--resume", "Resume from the last completed phase and pass --resume to child copy/delete phases")
   .option("--max-attempts <count>", "Maximum attempts per mutation item", "3")
   .option("--retry-initial-delay-ms <ms>", "Initial retry delay between mutation attempts", "1000")
   .option("--retry-max-delay-ms <ms>", "Maximum retry delay between mutation attempts", "8000")

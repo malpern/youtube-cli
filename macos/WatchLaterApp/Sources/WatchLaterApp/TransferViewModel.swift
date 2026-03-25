@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import os
@@ -28,6 +29,8 @@ final class TransferViewModel {
     var deleteProgress = PhaseProgressSnapshot(phase: .delete)
     var latestResult: MoveResultPayload?
     var currentToast: Toast?
+    private(set) var resumableRunID: String?
+    private var resumableDestination: TransferDestination?
     var authCheckResult = AuthCheckResult(
         isAuthenticated: true,
         title: "Signed in",
@@ -41,6 +44,7 @@ final class TransferViewModel {
     @ObservationIgnored private let authService: any AuthService
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private var moveTask: Task<Void, Never>?
+    @ObservationIgnored private var activeRunID: String?
 
     init(
         playlistService: any PlaylistService,
@@ -78,10 +82,6 @@ final class TransferViewModel {
         authCheckResult.detail
     }
 
-    var canAcknowledgeCompletion: Bool {
-        latestResult?.ok == true && !isRunningTransfer
-    }
-
     var selectedPlaylist: PlaylistSummary? {
         availablePlaylists.first(where: { $0.id == selectedPlaylistID })
     }
@@ -107,8 +107,8 @@ final class TransferViewModel {
     }
 
     var heroMessage: String {
-        if let errorMessage {
-            return errorMessage
+        if errorMessage != nil {
+            return "Migration failed"
         }
 
         if latestResult?.ok == true {
@@ -378,11 +378,22 @@ final class TransferViewModel {
                 try await authService.openLogin()
                 authCheckResult = AuthCheckResult(
                     isAuthenticated: false,
-                    title: "Finish signing in",
-                    detail: "Google Chrome opened on the dedicated YouTube profile. Sign in there, then click 'I've signed in. Check again'.",
+                    title: "Connecting to Chrome…",
+                    detail: "Waiting for Chrome to start up.",
                     accountLabel: nil
                 )
-                statusMessage = "Finish signing in in Chrome, then return to the app."
+                statusMessage = "Opening Chrome…"
+                isCheckingAuthentication = true
+
+                // Give Chrome time to start and open the debug port
+                try? await Task.sleep(for: .seconds(3))
+
+                await refreshAuthenticationStatus(announce: true)
+
+                // If still not authenticated, load playlists won't have run yet
+                if authCheckResult.isAuthenticated {
+                    await loadPlaylistsIfNeeded()
+                }
             } catch {
                 errorMessage = error.localizedDescription
                 statusMessage = "Could not open Google Chrome."
@@ -423,6 +434,13 @@ final class TransferViewModel {
                 currentToast = .error("Playlist loading failed.")
             }
         }
+    }
+
+    private func refreshPlaylistsAfterTransfer() async {
+        // Clear draft playlists — the backend has created them by now
+        availablePlaylists.removeAll(where: \.isDraft)
+        hasLoadedPlaylists = false
+        await refreshPlaylists(announce: false)
     }
 
     func presentNewPlaylistSheet() {
@@ -472,17 +490,49 @@ final class TransferViewModel {
         }
 
         log.info("beginTransfer: destination=\(destination.displayName, privacy: .public)")
+
+        let resumeRunID: String? = resolveResumableRunID(for: destination)
+
         moveTask?.cancel()
         resetRunState()
         hasStartedTransfer = true
         isRunningTransfer = true
         isEditingDestination = false
         errorMessage = nil
-        statusMessage = "Preparing migration to \(destination.displayName)."
+
+        if resumeRunID != nil {
+            statusMessage = "Resuming migration to \(destination.displayName)."
+        } else {
+            statusMessage = "Preparing migration to \(destination.displayName)."
+        }
 
         moveTask = Task {
-            await performMove(to: destination)
+            await performMove(to: destination, resumeRunID: resumeRunID)
         }
+    }
+
+    private func resolveResumableRunID(for destination: TransferDestination) -> String? {
+        guard let runID = resumableRunID, resumableDestination == destination else {
+            return nil
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Resume Previous Transfer?"
+        alert.informativeText = "A previous transfer to \(destination.displayName) was interrupted. Would you like to resume where it left off, or start fresh?"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Resume")
+        alert.addButton(withTitle: "Start Fresh")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            log.info("User chose to resume run \(runID, privacy: .public)")
+            return runID
+        }
+
+        log.info("User chose to start fresh, discarding resumable run \(runID, privacy: .public)")
+        resumableRunID = nil
+        resumableDestination = nil
+        return nil
     }
 
     func toggleProgressExpansion() {
@@ -490,13 +540,41 @@ final class TransferViewModel {
     }
 
     func acknowledgeCompletion() {
-        guard canAcknowledgeCompletion else {
-            return
-        }
-
         resetRunState()
+        resumableRunID = nil
+        resumableDestination = nil
         hasStartedTransfer = false
+        errorMessage = nil
         statusMessage = "Choose a destination, then start the migration."
+    }
+
+    func requestCancellation() {
+        let copied = copyProgress.completed
+        let total = copyProgress.total
+        let phase = currentPhase?.title ?? "unknown"
+
+        let alert = NSAlert()
+        alert.messageText = "Cancel Migration?"
+        alert.informativeText = """
+            Current phase: \(phase)
+            Copied: \(copied) of \(total > 0 ? "\(total)" : "?") videos
+
+            • Continue — resume the migration
+            • Stop — keep what's been copied, stop here
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Stop")
+
+        let response = alert.runModal()
+        if response == .alertSecondButtonReturn {
+            moveTask?.cancel()
+            moveTask = nil
+            isRunningTransfer = false
+            statusMessage = "Migration stopped. \(copied) videos were copied."
+            currentToast = .warning("Migration stopped.")
+            log.info("requestCancellation: user chose Stop after \(copied)/\(total)")
+        }
     }
 
     private var destination: TransferDestination? {
@@ -528,33 +606,47 @@ final class TransferViewModel {
         isEditingDestination = false
     }
 
-    private func performMove(to destination: TransferDestination) async {
+    private func performMove(to destination: TransferDestination, resumeRunID: String? = nil) async {
         do {
             let options = MoveExecutionOptions(
-                avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists
+                avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists,
+                resumeRunID: resumeRunID
             )
 
             for try await event in moveService.runMove(to: destination, options: options) {
                 handle(event)
             }
         } catch is CancellationError {
+            saveResumableRun(for: destination)
             isRunningTransfer = false
             statusMessage = "Migration cancelled."
             currentToast = .warning("Migration cancelled.")
             log.info("performMove: cancelled")
         } catch {
+            saveResumableRun(for: destination)
             isRunningTransfer = false
             errorMessage = error.localizedDescription
             statusMessage = "Migration failed."
-            currentToast = .error(error.localizedDescription)
+            Self.showErrorAlert(error.localizedDescription)
             log.error("performMove: failed — \(error.localizedDescription, privacy: .public)")
         }
     }
 
+    private func saveResumableRun(for destination: TransferDestination) {
+        guard let activeRunID else {
+            return
+        }
+
+        resumableRunID = activeRunID
+        resumableDestination = destination
+        log.info("Saved resumable run \(activeRunID, privacy: .public) for \(destination.displayName, privacy: .public)")
+    }
+
     private func handle(_ event: MoveEvent) {
         switch event {
-        case .started(let targetPlaylist, _):
-            log.info("Event: started, target=\(targetPlaylist, privacy: .public)")
+        case .started(let runID, let targetPlaylist, _):
+            activeRunID = runID
+            log.info("Event: started, runID=\(runID, privacy: .public), target=\(targetPlaylist, privacy: .public)")
             statusMessage = "Preparing migration to \(targetPlaylist)."
         case .phase(let phase, let status, _):
             log.info("Event: phase=\(phase.rawValue, privacy: .public), status=\(String(describing: status), privacy: .public)")
@@ -585,15 +677,24 @@ final class TransferViewModel {
             moveTask = nil
 
             if payload.ok {
+                resumableRunID = nil
+                resumableDestination = nil
                 currentPhase = .delete
                 copyProgress.markCompletedIfNeeded()
                 verifyProgress.markCompletedIfNeeded()
                 deleteProgress.markCompletedIfNeeded()
                 statusMessage = "Migration complete."
+                NSSound(named: .init("Glass"))?.play()
             } else {
                 errorMessage = payload.errorMessage
-                statusMessage = payload.errorMessage ?? "Migration failed."
-                currentToast = .error(payload.errorMessage ?? "Migration failed.")
+                statusMessage = "Migration failed."
+                if let msg = payload.errorMessage {
+                    Self.showErrorAlert(msg)
+                }
+            }
+
+            Task {
+                await refreshPlaylistsAfterTransfer()
             }
         }
     }
@@ -689,6 +790,36 @@ final class TransferViewModel {
         }
 
         return playlists.first?.id
+    }
+
+    static func showErrorAlert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Migration Failed"
+        alert.alertStyle = .critical
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 200))
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.string = message
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+
+        scrollView.documentView = textView
+
+        alert.accessoryView = scrollView
+        alert.addButton(withTitle: "Copy Error")
+        alert.addButton(withTitle: "OK")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message, forType: .string)
+        }
     }
 
     private static let refreshTimestampFormatter: DateFormatter = {

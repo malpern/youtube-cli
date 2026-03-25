@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -18,6 +19,7 @@ interface RunWorkflowOptions extends GlobalOptions {
   milestoneEvery?: string;
   sourceRunId?: string;
   skipSetup?: boolean;
+  resume?: boolean;
   maxAttempts?: string;
   retryInitialDelayMs?: string;
   retryMaxDelayMs?: string;
@@ -61,6 +63,10 @@ function runChildPhase(args: {
 
 function childRunDir(rootDir: string, runId: string): string {
   return path.join(rootDir, "runs", runId);
+}
+
+function childPhaseAlreadyCompleted(rootDir: string, runId: string, artifactName: string): boolean {
+  return fs.existsSync(path.join(childRunDir(rootDir, runId), artifactName));
 }
 
 function assertCopyChildSucceeded(rootDir: string, runId: string): void {
@@ -118,6 +124,8 @@ export async function runWorkflow(command: Command): Promise<void> {
   };
 
   try {
+    const resume = Boolean(options.resume);
+
     ctx.logEvent("run", "info", "run.plan", "Starting orchestrated non-destructive workflow", {
       targetPlaylist,
       targetPlaylistId,
@@ -126,35 +134,46 @@ export async function runWorkflow(command: Command): Promise<void> {
       sourceRunId: summary.sourceRunId,
       copyRunId,
       verifyRunId,
-      maxItems: summary.maxItems
+      maxItems: summary.maxItems,
+      resume
     });
 
     if (!options.skipSetup) {
-      runChildPhase({
-        rootDir: ctx.rootDir,
-        globalArgs,
-        childRunId: setupRunId,
-        phase: "setup",
-        phaseArgs: (() => {
-          const args: string[] = [];
-          appendTargetPlaylistArgs(args, targetRequest);
-          return args;
-        })()
-      });
+      const setupAlreadyDone = resume && childPhaseAlreadyCompleted(ctx.rootDir, setupRunId, "setup.json");
+      if (setupAlreadyDone) {
+        ctx.logEvent("run", "info", "run.skip-setup", "Setup already completed, skipping on resume", { setupRunId });
+      } else {
+        runChildPhase({
+          rootDir: ctx.rootDir,
+          globalArgs,
+          childRunId: setupRunId,
+          phase: "setup",
+          phaseArgs: (() => {
+            const args: string[] = [];
+            appendTargetPlaylistArgs(args, targetRequest);
+            return args;
+          })()
+        });
+      }
       summary.completedPhases.push("setup");
     }
 
     if (!options.sourceRunId) {
-      const inventoryArgs: string[] = [];
-      appendOptionalArg(inventoryArgs, "--max-items", options.maxItems);
+      const inventoryAlreadyDone = resume && childPhaseAlreadyCompleted(ctx.rootDir, inventoryRunId, "inventory.json");
+      if (inventoryAlreadyDone) {
+        ctx.logEvent("run", "info", "run.skip-inventory", "Inventory already completed, skipping on resume", { inventoryRunId });
+      } else {
+        const inventoryArgs: string[] = [];
+        appendOptionalArg(inventoryArgs, "--max-items", options.maxItems);
 
-      runChildPhase({
-        rootDir: ctx.rootDir,
-        globalArgs,
-        childRunId: inventoryRunId,
-        phase: "inventory",
-        phaseArgs: inventoryArgs
-      });
+        runChildPhase({
+          rootDir: ctx.rootDir,
+          globalArgs,
+          childRunId: inventoryRunId,
+          phase: "inventory",
+          phaseArgs: inventoryArgs
+        });
+      }
       summary.completedPhases.push("inventory");
     }
 
@@ -170,6 +189,9 @@ export async function runWorkflow(command: Command): Promise<void> {
     appendOptionalArg(copyArgs, "--jitter-max-ms", options.jitterMaxMs);
     appendOptionalArg(copyArgs, "--cooldown-every", options.cooldownEvery);
     appendOptionalArg(copyArgs, "--cooldown-ms", options.cooldownMs);
+    if (resume) {
+      copyArgs.push("--resume");
+    }
     runChildPhase({
       rootDir: ctx.rootDir,
       globalArgs,
@@ -191,7 +213,9 @@ export async function runWorkflow(command: Command): Promise<void> {
       phase: "verify",
       phaseArgs: verifyArgs
     });
-    assertVerifyChildSucceeded(ctx.rootDir, verifyRunId);
+    if (!options.maxItems) {
+      assertVerifyChildSucceeded(ctx.rootDir, verifyRunId);
+    }
     summary.completedPhases.push("verify");
     const childSummaries = readWorkflowChildSummaries({
       rootDir: ctx.rootDir,

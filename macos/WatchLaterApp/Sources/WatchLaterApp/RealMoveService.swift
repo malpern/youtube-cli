@@ -16,7 +16,7 @@ struct RealMoveService: MoveService {
 
             let process: Process
             do {
-                process = try CLIProcessRunner.makeProcess(arguments: moveArguments(for: destination))
+                process = try CLIProcessRunner.makeProcess(arguments: moveArguments(for: destination, options: options))
             } catch {
                 continuation.finish(throwing: error)
                 return
@@ -92,7 +92,7 @@ struct RealMoveService: MoveService {
             }
 
             do {
-                log.info("Launching move process: \(self.moveArguments(for: destination).joined(separator: " "), privacy: .public)")
+                log.info("Launching move process: \(self.moveArguments(for: destination, options: options).joined(separator: " "), privacy: .public)")
                 try process.run()
             } catch {
                 log.error("Move process launch failed: \(error.localizedDescription, privacy: .public)")
@@ -103,9 +103,15 @@ struct RealMoveService: MoveService {
         }
     }
 
-    private func moveArguments(for destination: TransferDestination) -> [String] {
+    private func moveArguments(for destination: TransferDestination, options: MoveExecutionOptions) -> [String] {
         let targetPlaylist = destination.displayName
-        var arguments = CLIBackendPaths.commonCLIArguments + ["move", "--json", "--target-playlist", targetPlaylist]
+        var arguments = CLIBackendPaths.commonCLIArguments
+
+        if let resumeRunID = options.resumeRunID {
+            arguments.append(contentsOf: ["--run-id", resumeRunID])
+        }
+
+        arguments.append(contentsOf: ["move", "--json", "--target-playlist", targetPlaylist])
 
         if case .existingPlaylist(let id, _) = destination {
             arguments.append(contentsOf: ["--target-playlist-id", id])
@@ -113,6 +119,10 @@ struct RealMoveService: MoveService {
 
         if let maxItems = preferences.developmentTransferLimit.maxItems {
             arguments.append(contentsOf: ["--development-max-items", String(maxItems)])
+        }
+
+        if options.resumeRunID != nil {
+            arguments.append("--resume")
         }
 
         return arguments
@@ -125,12 +135,14 @@ struct RealMoveService: MoveService {
 
         switch payload.type {
         case "started":
-            guard let targetPlaylist = payload.targetPlaylist,
+            guard let runId = payload.runId,
+                  let targetPlaylist = payload.targetPlaylist,
                   let workflow = payload.workflow else {
                 throw CLIProcessError(description: "Move stream emitted an incomplete started event.")
             }
 
             return .started(
+                runID: runId,
                 targetPlaylist: targetPlaylist,
                 workflow: MoveWorkflow(
                     workflowRunID: workflow.workflowRunId,
