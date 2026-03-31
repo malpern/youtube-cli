@@ -61,12 +61,18 @@ final class TransferViewModel {
     }
 
     var hasResumableRun: Bool {
-        resumableRunID != nil && resumableDestination != nil
+        (resumableRunID != nil || resumableSourceRunID != nil) && resumableDestination != nil
     }
 
     var resumableRunDescription: String? {
         guard let resumableDestination else { return nil }
-        return "A previous transfer to \(resumableDestination.displayName) was interrupted."
+        if resumableRunID != nil {
+            return "A previous transfer to \(resumableDestination.displayName) was interrupted."
+        }
+        if resumableSourceRunID != nil {
+            return "A prior inventory of your Watch Later is available. Resume the transfer to \(resumableDestination.displayName)."
+        }
+        return nil
     }
 
     var canRunTransfer: Bool {
@@ -572,12 +578,17 @@ final class TransferViewModel {
     }
 
     func restoreResumableRun() {
-        guard let savedRunID = preferences.resumableRunID,
-              let savedName = preferences.resumableDestinationName else {
+        guard let savedName = preferences.resumableDestinationName else {
             return
         }
 
-        resumableRunID = savedRunID
+        let hasRunID = preferences.resumableRunID != nil
+        let hasSourceRunID = preferences.resumableSourceRunID != nil
+        guard hasRunID || hasSourceRunID else {
+            return
+        }
+
+        resumableRunID = preferences.resumableRunID
         resumableSourceRunID = preferences.resumableSourceRunID
         resumeEnabled = true
 
@@ -587,7 +598,7 @@ final class TransferViewModel {
             resumableDestination = .newPlaylist(name: savedName)
         }
 
-        log.info("Restored resumable run \(savedRunID, privacy: .public) for \(savedName, privacy: .public), sourceRunID=\(self.resumableSourceRunID ?? "nil", privacy: .public)")
+        log.info("Restored resumable state for \(savedName, privacy: .public), runID=\(self.resumableRunID ?? "nil", privacy: .public), sourceRunID=\(self.resumableSourceRunID ?? "nil", privacy: .public), startIndex=\(self.preferences.resumableStartIndex)")
     }
 
     func toggleProgressExpansion() {
@@ -662,11 +673,13 @@ final class TransferViewModel {
 
     private func performMove(to destination: TransferDestination, resumeRunID: String? = nil, sourceRunID: String? = nil) async {
         do {
+            let effectiveSourceRunID = sourceRunID ?? resumableSourceRunID
             let options = MoveExecutionOptions(
                 avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists,
                 resumeRunID: resumeRunID,
-                sourceRunID: sourceRunID ?? resumableSourceRunID,
-                confirmDelete: sourceRunID != nil || resumableSourceRunID != nil
+                sourceRunID: effectiveSourceRunID,
+                confirmDelete: effectiveSourceRunID != nil,
+                startIndex: preferences.resumableStartIndex > 1 ? preferences.resumableStartIndex : 1
             )
 
             for try await event in moveService.runMove(to: destination, options: options) {

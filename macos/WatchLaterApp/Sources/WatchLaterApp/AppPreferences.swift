@@ -13,6 +13,7 @@ final class AppPreferences {
     static let resumableDestinationNameKey = "resumable-destination-name"
     static let resumableDestinationIDKey = "resumable-destination-id"
     static let resumableSourceRunIDKey = "resumable-source-run-id"
+    static let resumableStartIndexKey = "resumable-start-index"
 
     var avoidDuplicateAdditionsToPlaylists: Bool {
         didSet {
@@ -84,6 +85,12 @@ final class AppPreferences {
         }
     }
 
+    var resumableStartIndex: Int {
+        didSet {
+            userDefaults.set(resumableStartIndex, forKey: Self.resumableStartIndexKey)
+        }
+    }
+
     @ObservationIgnored private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
@@ -130,6 +137,7 @@ final class AppPreferences {
         self.resumableDestinationName = userDefaults.string(forKey: Self.resumableDestinationNameKey)
         self.resumableDestinationID = userDefaults.string(forKey: Self.resumableDestinationIDKey)
         self.resumableSourceRunID = userDefaults.string(forKey: Self.resumableSourceRunIDKey)
+        self.resumableStartIndex = userDefaults.integer(forKey: Self.resumableStartIndexKey)
     }
 
     func clearResumableRun() {
@@ -137,6 +145,7 @@ final class AppPreferences {
         resumableDestinationName = nil
         resumableDestinationID = nil
         resumableSourceRunID = nil
+        resumableStartIndex = 1
     }
 
     func saveResumableRun(runID: String, destination: TransferDestination, sourceRunID: String?) {
