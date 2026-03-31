@@ -31,6 +31,7 @@ final class TransferViewModel {
     var currentToast: Toast?
     private(set) var resumableRunID: String?
     private var resumableDestination: TransferDestination?
+    private var resumableSourceRunID: String?
     var resumeEnabled = true
     var authCheckResult = AuthCheckResult(
         isAuthenticated: true,
@@ -558,13 +559,14 @@ final class TransferViewModel {
         }
 
         moveTask = Task {
-            await performMove(to: destination, resumeRunID: resumeRunID)
+            await performMove(to: destination, resumeRunID: resumeRunID, sourceRunID: resumableSourceRunID)
         }
     }
 
     func clearResumableRun() {
         resumableRunID = nil
         resumableDestination = nil
+        resumableSourceRunID = nil
         resumeEnabled = true
         preferences.clearResumableRun()
     }
@@ -576,6 +578,7 @@ final class TransferViewModel {
         }
 
         resumableRunID = savedRunID
+        resumableSourceRunID = preferences.resumableSourceRunID
         resumeEnabled = true
 
         if let savedID = preferences.resumableDestinationID {
@@ -584,7 +587,7 @@ final class TransferViewModel {
             resumableDestination = .newPlaylist(name: savedName)
         }
 
-        log.info("Restored resumable run \(savedRunID, privacy: .public) for \(savedName, privacy: .public)")
+        log.info("Restored resumable run \(savedRunID, privacy: .public) for \(savedName, privacy: .public), sourceRunID=\(self.resumableSourceRunID ?? "nil", privacy: .public)")
     }
 
     func toggleProgressExpansion() {
@@ -657,11 +660,13 @@ final class TransferViewModel {
         isEditingDestination = false
     }
 
-    private func performMove(to destination: TransferDestination, resumeRunID: String? = nil) async {
+    private func performMove(to destination: TransferDestination, resumeRunID: String? = nil, sourceRunID: String? = nil) async {
         do {
             let options = MoveExecutionOptions(
                 avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists,
-                resumeRunID: resumeRunID
+                resumeRunID: resumeRunID,
+                sourceRunID: sourceRunID ?? resumableSourceRunID,
+                confirmDelete: sourceRunID != nil || resumableSourceRunID != nil
             )
 
             for try await event in moveService.runMove(to: destination, options: options) {
@@ -683,15 +688,16 @@ final class TransferViewModel {
         }
     }
 
-    private func saveResumableRun(for destination: TransferDestination) {
+    private func saveResumableRun(for destination: TransferDestination, sourceRunID: String? = nil) {
         guard let activeRunID else {
             return
         }
 
         resumableRunID = activeRunID
         resumableDestination = destination
+        resumableSourceRunID = sourceRunID ?? resumableSourceRunID
         resumeEnabled = true
-        preferences.saveResumableRun(runID: activeRunID, destination: destination)
+        preferences.saveResumableRun(runID: activeRunID, destination: destination, sourceRunID: resumableSourceRunID)
         log.info("Saved resumable run \(activeRunID, privacy: .public) for \(destination.displayName, privacy: .public)")
     }
 

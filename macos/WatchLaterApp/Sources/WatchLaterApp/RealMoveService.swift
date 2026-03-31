@@ -8,7 +8,11 @@ struct RealMoveService: MoveService {
     let preferences: AppPreferences
 
     func runMove(to destination: TransferDestination, options: MoveExecutionOptions) -> AsyncThrowingStream<MoveEvent, Error> {
-        log.info("Starting move to \(destination.displayName, privacy: .public)")
+        let arguments = options.useChunkedMove
+            ? chunkedMoveArguments(for: destination, options: options)
+            : moveArguments(for: destination, options: options)
+
+        log.info("Starting \(options.useChunkedMove ? "chunked-move" : "move", privacy: .public) to \(destination.displayName, privacy: .public)")
         return AsyncThrowingStream { continuation in
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
@@ -16,7 +20,7 @@ struct RealMoveService: MoveService {
 
             let process: Process
             do {
-                process = try CLIProcessRunner.makeProcess(arguments: moveArguments(for: destination, options: options))
+                process = try CLIProcessRunner.makeProcess(arguments: arguments)
             } catch {
                 continuation.finish(throwing: error)
                 return
@@ -119,6 +123,40 @@ struct RealMoveService: MoveService {
 
         if let maxItems = preferences.developmentTransferLimit.maxItems {
             arguments.append(contentsOf: ["--development-max-items", String(maxItems)])
+        }
+
+        if options.resumeRunID != nil {
+            arguments.append("--resume")
+        }
+
+        return arguments
+    }
+
+    private func chunkedMoveArguments(for destination: TransferDestination, options: MoveExecutionOptions) -> [String] {
+        let targetPlaylist = destination.displayName
+        var arguments = CLIBackendPaths.commonCLIArguments
+
+        if let resumeRunID = options.resumeRunID {
+            arguments.append(contentsOf: ["--run-id", resumeRunID])
+        }
+
+        arguments.append(contentsOf: [
+            "chunked-move", "--json",
+            "--target-playlist", targetPlaylist,
+            "--chunk-size", String(options.chunkSize),
+            "--start-index", String(options.startIndex)
+        ])
+
+        if case .existingPlaylist(let id, _) = destination {
+            arguments.append(contentsOf: ["--target-playlist-id", id])
+        }
+
+        if let sourceRunID = options.sourceRunID {
+            arguments.append(contentsOf: ["--source-run-id", sourceRunID])
+        }
+
+        if options.confirmDelete {
+            arguments.append("--confirm-delete")
         }
 
         if options.resumeRunID != nil {

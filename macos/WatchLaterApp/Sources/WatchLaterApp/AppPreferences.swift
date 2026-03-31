@@ -12,6 +12,7 @@ final class AppPreferences {
     static let resumableRunIDKey = "resumable-run-id"
     static let resumableDestinationNameKey = "resumable-destination-name"
     static let resumableDestinationIDKey = "resumable-destination-id"
+    static let resumableSourceRunIDKey = "resumable-source-run-id"
 
     var avoidDuplicateAdditionsToPlaylists: Bool {
         didSet {
@@ -73,6 +74,16 @@ final class AppPreferences {
         }
     }
 
+    var resumableSourceRunID: String? {
+        didSet {
+            if let resumableSourceRunID {
+                userDefaults.set(resumableSourceRunID, forKey: Self.resumableSourceRunIDKey)
+            } else {
+                userDefaults.removeObject(forKey: Self.resumableSourceRunIDKey)
+            }
+        }
+    }
+
     @ObservationIgnored private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
@@ -118,17 +129,20 @@ final class AppPreferences {
         self.resumableRunID = userDefaults.string(forKey: Self.resumableRunIDKey)
         self.resumableDestinationName = userDefaults.string(forKey: Self.resumableDestinationNameKey)
         self.resumableDestinationID = userDefaults.string(forKey: Self.resumableDestinationIDKey)
+        self.resumableSourceRunID = userDefaults.string(forKey: Self.resumableSourceRunIDKey)
     }
 
     func clearResumableRun() {
         resumableRunID = nil
         resumableDestinationName = nil
         resumableDestinationID = nil
+        resumableSourceRunID = nil
     }
 
-    func saveResumableRun(runID: String, destination: TransferDestination) {
+    func saveResumableRun(runID: String, destination: TransferDestination, sourceRunID: String?) {
         resumableRunID = runID
         resumableDestinationName = destination.displayName
+        resumableSourceRunID = sourceRunID
         switch destination {
         case .existingPlaylist(let id, _):
             resumableDestinationID = id

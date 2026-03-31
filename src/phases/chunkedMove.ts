@@ -12,7 +12,7 @@ import type { SaveToPlaylistTimings } from "../browser/youtube/saveToPlaylist.js
 import type { InventoryItem } from "../models/types.js";
 import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
 import { pauseRunForAuthentication } from "../services/authPause.js";
-import { buildChunkedMoveAppPayload } from "../services/appContracts.js";
+import { buildMoveAppPayload } from "../services/appContracts.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
 import { sliceIntoChunks, planChunkedMoveResume } from "../services/chunkPlanner.js";
 import type { ChunkedMoveChunkPhase } from "../services/chunkPlanner.js";
@@ -37,7 +37,9 @@ function appendOperation(
 }
 
 export async function runChunkedMove(command: Command): Promise<void> {
-  const ctx = createRunContext(command, PHASE);
+  const localOpts = command.opts<{ json?: boolean }>();
+  const json = Boolean(localOpts.json);
+  const ctx = createRunContext(command, PHASE, json ? { consoleStream: process.stderr } : {});
   const localOptions = command.opts<{
     targetPlaylist?: string;
     targetPlaylistId?: string;
@@ -134,12 +136,16 @@ export async function runChunkedMove(command: Command): Promise<void> {
   if (emitJson) {
     emitJsonLine(ctx.runId, {
       type: "started",
-      totalItems,
-      chunkSize,
-      totalChunks,
-      confirmDelete,
-      resumed: resumePlan.resumed
+      runId: ctx.runId,
+      targetPlaylist,
+      workflow: {
+        workflowRunId: ctx.runId,
+        verifyRunId: `${ctx.runId}-verify`,
+        deleteRunId: `${ctx.runId}-delete`
+      }
     });
+    emitJsonLine(ctx.runId, { type: "phase", phase: "inventory", status: "completed" });
+    emitJsonLine(ctx.runId, { type: "phase", phase: "copy", status: "started" });
   }
 
   let savedCount = resumePlan.savedCount;
@@ -193,15 +199,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
         resumed: shouldResumeMidChunk
       });
 
-      if (emitJson) {
-        emitJsonLine(ctx.runId, {
-          type: "chunk",
-          chunkIndex,
-          status: "started",
-          startSourceIndex: chunkStartSourceIndex,
-          endSourceIndex: chunkEndSourceIndex
-        });
-      }
+      // (chunk-started is implicit — item events provide progress)
 
       // ─── COPY PHASE ─────────────────────────────────────────
       if (chunkPhase === "copy") {
@@ -368,9 +366,18 @@ export async function runChunkedMove(command: Command): Promise<void> {
             emitJsonLine(ctx.runId, {
               type: "item",
               phase: "copy",
-              chunkIndex,
-              sourceIndex: item.sourceIndex,
-              result: "ok"
+              completed: savedCount + alreadySavedCount,
+              total: totalItems,
+              item: {
+                sourceIndex: item.sourceIndex,
+                title: item.title,
+                channelName: item.channelName,
+                videoId: item.videoId,
+                videoUrl: item.videoUrl,
+                thumbnailUrl: thumbnailUrlForVideoId(item.videoId),
+                result: "saved"
+              },
+              occurredAt: new Date().toISOString()
             });
           }
         }
@@ -395,14 +402,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
             timestamp: new Date().toISOString()
           });
 
-          if (emitJson) {
-            emitJsonLine(ctx.runId, {
-              type: "chunk-phase",
-              chunkIndex,
-              phase: "verify",
-              status: "skipped-clean"
-            });
-          }
+          // (skip verify event — no need to transition phases in UI for clean chunks)
 
           chunkPhase = "delete";
           saveCheckpoint(chunkIndex, "delete", chunkCopyProcessed, chunkDeleteProcessed);
@@ -451,16 +451,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
           timestamp: new Date().toISOString()
         });
 
-        if (emitJson) {
-          emitJsonLine(ctx.runId, {
-            type: "chunk-phase",
-            chunkIndex,
-            phase: "verify",
-            status: verificationResult.passed ? "passed" : "failed",
-            matchedCount: verificationResult.matchedCount,
-            checkedCount: verificationResult.checkedCount
-          });
-        }
+        // (verify progress is inline — no separate UI phase event needed)
 
         if (!verificationResult.passed) {
           ctx.logEvent(PHASE, "error", "chunked-move.verify-failed", "Chunk verification failed — halting before delete", {
@@ -581,9 +572,18 @@ export async function runChunkedMove(command: Command): Promise<void> {
               emitJsonLine(ctx.runId, {
                 type: "item",
                 phase: "delete",
-                chunkIndex,
-                sourceIndex: item.sourceIndex,
-                result: "removed"
+                completed: removedCount,
+                total: totalItems,
+                item: {
+                  sourceIndex: item.sourceIndex,
+                  title: item.title,
+                  channelName: item.channelName,
+                  videoId: item.videoId,
+                  videoUrl: item.videoUrl,
+                  thumbnailUrl: thumbnailUrlForVideoId(item.videoId),
+                  result: "removed"
+                },
+                occurredAt: new Date().toISOString()
               });
             }
           }
@@ -607,17 +607,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
         rateItemsPerSecond: formatRate(savedCount + alreadySavedCount, startedAtMs)
       });
 
-      if (emitJson) {
-        emitJsonLine(ctx.runId, {
-          type: "chunk",
-          chunkIndex,
-          status: "completed",
-          completedChunks,
-          totalChunks,
-          savedCount,
-          removedCount
-        });
-      }
+      // (chunk completion is implicit from item progress)
 
       // Inter-chunk cooldown (skip after the last chunk)
       if (chunkIndex < totalChunks - 1 && interChunkCooldownMs > 0) {
@@ -669,7 +659,13 @@ export async function runChunkedMove(command: Command): Promise<void> {
     ctx.db.upsertRunState(PHASE, "complete");
 
     if (emitJson) {
-      emitJsonLine(ctx.runId, { type: "result", ok: true, ...summary });
+      emitJsonLine(ctx.runId, {
+        type: "result",
+        ok: true,
+        runId: ctx.runId,
+        targetPlaylist: resolvedTargetPlaylist,
+        artifacts: { summaryPath: path.join(ctx.artifacts.runDir, "summary.json") }
+      });
     }
   } catch (error) {
     if (error instanceof AuthenticationRequiredError) {
@@ -682,7 +678,13 @@ export async function runChunkedMove(command: Command): Promise<void> {
     ctx.db.upsertRunState(PHASE, "failed");
 
     if (emitJson) {
-      emitJsonLine(ctx.runId, { type: "result", ok: false, error: message });
+      emitJsonLine(ctx.runId, {
+        type: "result",
+        ok: false,
+        runId: ctx.runId,
+        targetPlaylist,
+        error: message
+      });
     }
 
     throw error;
@@ -759,6 +761,10 @@ export async function runChunkedMove(command: Command): Promise<void> {
 }
 
 function emitJsonLine(runId: string, payload: Record<string, unknown>): void {
-  const envelope = buildChunkedMoveAppPayload(runId, payload);
+  const envelope = buildMoveAppPayload(runId, payload);
   process.stdout.write(`${JSON.stringify(envelope)}\n`);
+}
+
+function thumbnailUrlForVideoId(videoId: string | null | undefined): string | null {
+  return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null;
 }
