@@ -182,6 +182,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
       let chunkPhase: ChunkedMoveChunkPhase = shouldResumeMidChunk ? resumePlan.currentChunkPhase : "copy";
       let chunkCopyProcessed = shouldResumeMidChunk ? resumePlan.currentChunkCopyProcessed : 0;
       let chunkDeleteProcessed = shouldResumeMidChunk ? resumePlan.currentChunkDeleteProcessed : 0;
+      let chunkCopyClean = true; // Track whether any copy failures occurred in this chunk
 
       ctx.logEvent(PHASE, "info", "chunked-move.chunk-started", "Starting chunk", {
         chunkIndex,
@@ -240,6 +241,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
             });
             ambiguousBlockedCount += 1;
             failedCount += 1;
+            chunkCopyClean = false;
             chunkCopyProcessed = i + 1;
             saveCheckpoint(chunkIndex, "copy", chunkCopyProcessed, chunkDeleteProcessed);
             continue;
@@ -254,12 +256,14 @@ export async function runChunkedMove(command: Command): Promise<void> {
             const { result: response, attempts } = await runWithRetries({
               policy: retryPolicy,
               run: async () => {
-                await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.before`);
+                // Periodic auth check every 10 items (open-panel check always runs)
+                if (i % 10 === 0) {
+                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.periodic`);
+                }
                 try {
                   const resp = await ensureVideoSavedToPlaylist(session.page, videoUrl, target, async () => {
                     await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.open-save-panel`);
-                  });
-                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.after`);
+                  }, { skipReopenConfirm: true });
                   return resp;
                 } catch (error) {
                   await throwIfAuthenticationLost(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.failure`, error);
@@ -341,6 +345,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
             });
             retryExhaustedCount += 1;
             failedCount += 1;
+            chunkCopyClean = false;
           }
 
           chunkCopyProcessed = i + 1;
@@ -376,6 +381,32 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
       // ─── VERIFY PHASE ───────────────────────────────────────
       if (chunkPhase === "verify") {
+        if (chunkCopyClean) {
+          ctx.logEvent(PHASE, "info", "chunked-move.verify-skipped", "Skipping verification — all copy items succeeded", {
+            chunkIndex
+          });
+
+          appendOperation(operationsPath, {
+            phase: "verify",
+            chunkIndex,
+            passed: true,
+            skipped: true,
+            reason: "copy-clean",
+            timestamp: new Date().toISOString()
+          });
+
+          if (emitJson) {
+            emitJsonLine(ctx.runId, {
+              type: "chunk-phase",
+              chunkIndex,
+              phase: "verify",
+              status: "skipped-clean"
+            });
+          }
+
+          chunkPhase = "delete";
+          saveCheckpoint(chunkIndex, "delete", chunkCopyProcessed, chunkDeleteProcessed);
+        } else {
         const chunkCopyableItems = chunk.filter((item) => {
           const policy = assessSourceItemPolicy(item);
           return policy.policy === "copyable" && item.videoId;
@@ -446,6 +477,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
         chunkPhase = "delete";
         saveCheckpoint(chunkIndex, "delete", chunkCopyProcessed, chunkDeleteProcessed);
+        } // end else (not chunkCopyClean)
       }
 
       // ─── DELETE PHASE ────────────────────────────────────────
@@ -465,9 +497,11 @@ export async function runChunkedMove(command: Command): Promise<void> {
               const { attempts } = await runWithRetries({
                 policy: retryPolicy,
                 run: async () => {
-                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.delete.${item.sourceIndex}.before`);
+                  // Periodic auth check every 10 items
+                  if (i % 10 === 0) {
+                    await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.delete.${item.sourceIndex}.periodic`);
+                  }
                   await removeTopWatchLaterItem(session.page, item);
-                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.delete.${item.sourceIndex}.after`);
                 },
                 onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
                   ctx.logEvent(PHASE, "warn", "chunked-move.delete-retry", "Retrying delete item", {

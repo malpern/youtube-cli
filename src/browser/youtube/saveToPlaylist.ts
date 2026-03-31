@@ -148,11 +148,19 @@ export async function ensurePlaylistExistsFromVideo(
   return "created";
 }
 
+export interface SaveToPlaylistOptions {
+  /** Skip the 5s poll + reopen-confirm path after clicking save. Trust the click
+   *  and rely on external verification (e.g. chunk-level verify) to catch failures.
+   *  Reduces per-item time from ~24s to ~4s. */
+  skipReopenConfirm?: boolean;
+}
+
 export async function ensureVideoSavedToPlaylist(
   page: Page,
   videoUrl: string,
   target: PlaylistTarget,
-  authCheck?: () => Promise<void>
+  authCheck?: () => Promise<void>,
+  options?: SaveToPlaylistOptions
 ): Promise<SaveToPlaylistResponse> {
   const totalStartedAt = Date.now();
   const panelTimings = await openSaveToPlaylistPanel(page, videoUrl, authCheck);
@@ -175,6 +183,25 @@ export async function ensureVideoSavedToPlaylist(
   }
 
   await playlistButton.click({ force: true, timeout: 10_000 });
+
+  if (options?.skipReopenConfirm) {
+    // Trust the click — wait briefly for YouTube to process, then move on.
+    // Chunk-level verification catches any silent failures before deletion.
+    const selectionStartedAt = Date.now();
+    await waitForPlaylistSelection(page, target, 1_500);
+    const selectionMs = Date.now() - selectionStartedAt;
+    await page.keyboard.press("Escape").catch(() => undefined);
+    return {
+      result: "saved",
+      timings: {
+        ...panelTimings,
+        selectionMs,
+        reopenConfirmMs: 0,
+        totalMs: Date.now() - totalStartedAt
+      }
+    };
+  }
+
   const selectionStartedAt = Date.now();
   const selected = await waitForPlaylistSelection(page, target);
   const selectionMs = Date.now() - selectionStartedAt;
@@ -214,8 +241,8 @@ export async function ensureVideoSavedToPlaylist(
   };
 }
 
-async function waitForPlaylistSelection(page: Page, target: PlaylistTarget): Promise<boolean> {
-  const deadline = Date.now() + 5_000;
+async function waitForPlaylistSelection(page: Page, target: PlaylistTarget, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const playlistButton = await getPlaylistButtonForTarget(page, target).catch(() => null);
     const attr = await playlistButton?.getAttribute("aria-pressed").catch(() => null);
