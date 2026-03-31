@@ -11,6 +11,9 @@ struct DestinationCardView: View {
         VStack(alignment: .leading, spacing: AppStyle.groupSpacing) {
             WatchLaterSummaryView(summary: model.watchLaterSummary)
             transferDestinationSection
+            if model.hasResumableRun {
+                resumeBanner
+            }
             transferActionRow
         }
         .sheet(isPresented: $model.isShowingNewPlaylistSheet) {
@@ -110,6 +113,53 @@ struct DestinationCardView: View {
             .frame(width: 20, height: 20)
             .rotationEffect(.degrees(model.isEditingDestination ? 180 : 0))
             .animation(.easeInOut(duration: 0.16), value: model.isEditingDestination)
+    }
+
+    private var resumeBanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.orange)
+
+                Text("Previous Transfer Interrupted")
+                    .font(.subheadline.weight(.semibold))
+            }
+
+            if let description = model.resumableRunDescription {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Toggle("Resume where it left off", isOn: $model.resumeEnabled)
+                    .toggleStyle(.checkbox)
+                    .font(.subheadline)
+                    .accessibilityLabel("Resume previous transfer")
+                    .accessibilityHint("When enabled, continues the interrupted transfer instead of starting over.")
+
+                Spacer()
+
+                Button("Discard") {
+                    model.clearResumableRun()
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Discard previous transfer")
+                .accessibilityHint("Removes the interrupted transfer record and starts fresh.")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.orange.opacity(0.08))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+        }
     }
 
     private var transferActionRow: some View {

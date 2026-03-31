@@ -31,6 +31,7 @@ final class TransferViewModel {
     var currentToast: Toast?
     private(set) var resumableRunID: String?
     private var resumableDestination: TransferDestination?
+    var resumeEnabled = true
     var authCheckResult = AuthCheckResult(
         isAuthenticated: true,
         title: "Signed in",
@@ -56,6 +57,15 @@ final class TransferViewModel {
         self.moveService = moveService
         self.authService = authService
         self.preferences = preferences
+    }
+
+    var hasResumableRun: Bool {
+        resumableRunID != nil && resumableDestination != nil
+    }
+
+    var resumableRunDescription: String? {
+        guard let resumableDestination else { return nil }
+        return "A previous transfer to \(resumableDestination.displayName) was interrupted."
     }
 
     var canRunTransfer: Bool {
@@ -280,6 +290,11 @@ final class TransferViewModel {
 
     func loadPlaylistsIfNeeded() async {
         log.info("loadPlaylistsIfNeeded: hasLoaded=\(self.hasLoadedPlaylists), backend=\(self.preferences.backendMode.rawValue, privacy: .public)")
+
+        if !hasLoadedPlaylists {
+            restoreResumableRun()
+        }
+
         await refreshAuthenticationStatus(announce: false)
         guard !requiresAuthenticationGate else {
             log.info("loadPlaylistsIfNeeded: blocked by auth gate")
@@ -402,6 +417,37 @@ final class TransferViewModel {
         }
     }
 
+    func restartBrowser() {
+        Task {
+            do {
+                authCheckResult = AuthCheckResult(
+                    isAuthenticated: false,
+                    title: "Restarting Chrome…",
+                    detail: "Shutting down the unresponsive browser and launching a fresh one.",
+                    accountLabel: nil
+                )
+                isCheckingAuthentication = true
+                statusMessage = "Restarting Chrome…"
+
+                try await authService.restartBrowser()
+
+                // Give Chrome time to start and open the debug port
+                try? await Task.sleep(for: .seconds(3))
+
+                await refreshAuthenticationStatus(announce: true)
+
+                if authCheckResult.isAuthenticated {
+                    await loadPlaylistsIfNeeded()
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Could not restart Chrome."
+                currentToast = .error("Could not restart Chrome.")
+                isCheckingAuthentication = false
+            }
+        }
+    }
+
     func refreshPlaylists(announce: Bool) async {
         isLoadingPlaylists = true
         errorMessage = nil
@@ -491,7 +537,12 @@ final class TransferViewModel {
 
         log.info("beginTransfer: destination=\(destination.displayName, privacy: .public)")
 
-        let resumeRunID: String? = resolveResumableRunID(for: destination)
+        let resumeRunID: String? = (hasResumableRun && resumeEnabled) ? resumableRunID : nil
+
+        if resumeRunID == nil && hasResumableRun {
+            log.info("User chose start fresh, discarding resumable run \(self.resumableRunID ?? "nil", privacy: .public)")
+            clearResumableRun()
+        }
 
         moveTask?.cancel()
         resetRunState()
@@ -511,28 +562,29 @@ final class TransferViewModel {
         }
     }
 
-    private func resolveResumableRunID(for destination: TransferDestination) -> String? {
-        guard let runID = resumableRunID, resumableDestination == destination else {
-            return nil
-        }
-
-        let alert = NSAlert()
-        alert.messageText = "Resume Previous Transfer?"
-        alert.informativeText = "A previous transfer to \(destination.displayName) was interrupted. Would you like to resume where it left off, or start fresh?"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Resume")
-        alert.addButton(withTitle: "Start Fresh")
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            log.info("User chose to resume run \(runID, privacy: .public)")
-            return runID
-        }
-
-        log.info("User chose to start fresh, discarding resumable run \(runID, privacy: .public)")
+    func clearResumableRun() {
         resumableRunID = nil
         resumableDestination = nil
-        return nil
+        resumeEnabled = true
+        preferences.clearResumableRun()
+    }
+
+    func restoreResumableRun() {
+        guard let savedRunID = preferences.resumableRunID,
+              let savedName = preferences.resumableDestinationName else {
+            return
+        }
+
+        resumableRunID = savedRunID
+        resumeEnabled = true
+
+        if let savedID = preferences.resumableDestinationID {
+            resumableDestination = .existingPlaylist(id: savedID, title: savedName)
+        } else {
+            resumableDestination = .newPlaylist(name: savedName)
+        }
+
+        log.info("Restored resumable run \(savedRunID, privacy: .public) for \(savedName, privacy: .public)")
     }
 
     func toggleProgressExpansion() {
@@ -541,8 +593,7 @@ final class TransferViewModel {
 
     func acknowledgeCompletion() {
         resetRunState()
-        resumableRunID = nil
-        resumableDestination = nil
+        clearResumableRun()
         hasStartedTransfer = false
         errorMessage = nil
         statusMessage = "Choose a destination, then start the migration."
@@ -639,6 +690,8 @@ final class TransferViewModel {
 
         resumableRunID = activeRunID
         resumableDestination = destination
+        resumeEnabled = true
+        preferences.saveResumableRun(runID: activeRunID, destination: destination)
         log.info("Saved resumable run \(activeRunID, privacy: .public) for \(destination.displayName, privacy: .public)")
     }
 
@@ -677,8 +730,7 @@ final class TransferViewModel {
             moveTask = nil
 
             if payload.ok {
-                resumableRunID = nil
-                resumableDestination = nil
+                clearResumableRun()
                 currentPhase = .delete
                 copyProgress.markCompletedIfNeeded()
                 verifyProgress.markCompletedIfNeeded()

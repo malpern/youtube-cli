@@ -8,6 +8,10 @@ final class AppPreferences {
     static let backendModeKey = "backend-mode"
     static let developmentTransferLimitKey = "development-transfer-limit"
     static let playlistPollingEnabledKey = "playlist-polling-enabled"
+    static let showBrowserWindowKey = "show-browser-window"
+    static let resumableRunIDKey = "resumable-run-id"
+    static let resumableDestinationNameKey = "resumable-destination-name"
+    static let resumableDestinationIDKey = "resumable-destination-id"
 
     var avoidDuplicateAdditionsToPlaylists: Bool {
         didSet {
@@ -30,6 +34,42 @@ final class AppPreferences {
     var playlistPollingEnabled: Bool {
         didSet {
             userDefaults.set(playlistPollingEnabled, forKey: Self.playlistPollingEnabledKey)
+        }
+    }
+
+    var showBrowserWindow: Bool {
+        didSet {
+            userDefaults.set(showBrowserWindow, forKey: Self.showBrowserWindowKey)
+        }
+    }
+
+    var resumableRunID: String? {
+        didSet {
+            if let resumableRunID {
+                userDefaults.set(resumableRunID, forKey: Self.resumableRunIDKey)
+            } else {
+                userDefaults.removeObject(forKey: Self.resumableRunIDKey)
+            }
+        }
+    }
+
+    var resumableDestinationName: String? {
+        didSet {
+            if let resumableDestinationName {
+                userDefaults.set(resumableDestinationName, forKey: Self.resumableDestinationNameKey)
+            } else {
+                userDefaults.removeObject(forKey: Self.resumableDestinationNameKey)
+            }
+        }
+    }
+
+    var resumableDestinationID: String? {
+        didSet {
+            if let resumableDestinationID {
+                userDefaults.set(resumableDestinationID, forKey: Self.resumableDestinationIDKey)
+            } else {
+                userDefaults.removeObject(forKey: Self.resumableDestinationIDKey)
+            }
         }
     }
 
@@ -66,6 +106,34 @@ final class AppPreferences {
             userDefaults.set(false, forKey: Self.playlistPollingEnabledKey)
         } else {
             self.playlistPollingEnabled = userDefaults.bool(forKey: Self.playlistPollingEnabledKey)
+        }
+
+        if userDefaults.object(forKey: Self.showBrowserWindowKey) == nil {
+            self.showBrowserWindow = false
+            userDefaults.set(false, forKey: Self.showBrowserWindowKey)
+        } else {
+            self.showBrowserWindow = userDefaults.bool(forKey: Self.showBrowserWindowKey)
+        }
+
+        self.resumableRunID = userDefaults.string(forKey: Self.resumableRunIDKey)
+        self.resumableDestinationName = userDefaults.string(forKey: Self.resumableDestinationNameKey)
+        self.resumableDestinationID = userDefaults.string(forKey: Self.resumableDestinationIDKey)
+    }
+
+    func clearResumableRun() {
+        resumableRunID = nil
+        resumableDestinationName = nil
+        resumableDestinationID = nil
+    }
+
+    func saveResumableRun(runID: String, destination: TransferDestination) {
+        resumableRunID = runID
+        resumableDestinationName = destination.displayName
+        switch destination {
+        case .existingPlaylist(let id, _):
+            resumableDestinationID = id
+        case .newPlaylist:
+            resumableDestinationID = nil
         }
     }
 }
