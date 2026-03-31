@@ -12,7 +12,8 @@ export type Phase =
   | "performance"
   | "run"
   | "playlists"
-  | "move";
+  | "move"
+  | "chunked-move";
 
 export interface RunConfig {
   profileDir: string | undefined;

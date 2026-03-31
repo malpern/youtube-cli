@@ -16,6 +16,7 @@ import { runDelete } from "./phases/delete.js";
 import { runWorkflow } from "./phases/run.js";
 import { runPlaylists } from "./phases/playlists.js";
 import { runMove } from "./phases/move.js";
+import { runChunkedMove } from "./phases/chunkedMove.js";
 import { runStatus } from "./phases/status.js";
 
 const program = new Command();
@@ -236,6 +237,30 @@ program
   .option("--json", "Emit machine-readable JSON for app integrations")
   .action(async function action() {
     await runMove(this);
+  });
+
+program
+  .command("chunked-move")
+  .description("Move Watch Later items to a target playlist in small chunks: copy N, verify N, delete N, repeat")
+  .option("--target-playlist <name>", "Playlist name to move into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot as the source of truth")
+  .option("--chunk-size <count>", "Number of items to process per chunk", "50")
+  .option("--start-index <index>", "Start at this source snapshot index", "1")
+  .option("--max-items <count>", "Total items to process across all chunks")
+  .option("--inter-chunk-cooldown-ms <ms>", "Cooldown pause between chunks in milliseconds", "60000")
+  .option("--max-attempts <count>", "Maximum attempts per mutation item", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between mutation attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between mutation attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between mutation items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between mutation items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N mutation items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--resume", "Resume from the checkpoint in the selected run directory")
+  .option("--confirm-delete", "Acknowledge destructive deletion from Watch Later")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runChunkedMove(this);
   });
 
 await program.parseAsync(process.argv);

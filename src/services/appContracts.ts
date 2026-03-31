@@ -2,7 +2,7 @@ import type { DoctorCheck } from "../models/types.js";
 
 export const APP_CONTRACT_VERSION = 1;
 
-export type AppContractSurface = "doctor" | "playlists" | "move";
+export type AppContractSurface = "doctor" | "playlists" | "move" | "chunked-move";
 
 export interface AppContractEnvelope {
   appContractVersion: number;
@@ -32,6 +32,16 @@ export function buildMoveAppPayload<T extends Record<string, unknown>>(
   payload: T
 ): AppContractEnvelope & { runId: string } & T {
   return buildAppContractEnvelope("move", {
+    runId,
+    ...payload
+  });
+}
+
+export function buildChunkedMoveAppPayload<T extends Record<string, unknown>>(
+  runId: string,
+  payload: T
+): AppContractEnvelope & { runId: string } & T {
+  return buildAppContractEnvelope("chunked-move", {
     runId,
     ...payload
   });
