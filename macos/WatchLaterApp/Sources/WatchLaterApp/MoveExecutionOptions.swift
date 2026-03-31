@@ -8,7 +8,5 @@ struct MoveExecutionOptions: Equatable {
     var chunkSize: Int = 50
     var startIndex: Int = 1
 
-    var useChunkedMove: Bool {
-        sourceRunID != nil
-    }
+    var useChunkedMove: Bool = true
 }

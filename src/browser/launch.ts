@@ -6,6 +6,55 @@ import type { RunConfig } from "../models/types.js";
 import { resolveBrowserWindowSettings } from "../services/browserWindowSettings.js";
 
 const AUTOMATION_WINDOW_NAME = "__youtube_watchlist_automation__";
+const CDP_HEALTH_CHECK_TIMEOUT_MS = 3_000;
+const CDP_CONNECT_TIMEOUT_MS = 15_000;
+
+export class StaleBrowserError extends Error {
+  readonly cdpUrl: string;
+
+  constructor(cdpUrl: string) {
+    super(
+      `Chrome is running but unresponsive to CDP commands. ` +
+      `The browser at ${cdpUrl} may need to be restarted.`
+    );
+    this.name = "StaleBrowserError";
+    this.cdpUrl = cdpUrl;
+  }
+}
+
+export class BrowserNotRunningError extends Error {
+  readonly cdpUrl: string;
+
+  constructor(cdpUrl: string) {
+    super(`No browser is listening on ${cdpUrl}. Launch Chrome with remote debugging first.`);
+    this.name = "BrowserNotRunningError";
+    this.cdpUrl = cdpUrl;
+  }
+}
+
+export interface CdpHealthCheckResult {
+  reachable: boolean;
+  browser?: string | undefined;
+}
+
+export async function checkCdpHealth(cdpUrl: string): Promise<CdpHealthCheckResult> {
+  const versionUrl = cdpUrl.replace(/\/$/, "") + "/json/version";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CDP_HEALTH_CHECK_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(versionUrl, { signal: controller.signal });
+    if (!response.ok) {
+      return { reachable: false };
+    }
+    const data = (await response.json()) as { Browser?: string };
+    return { reachable: true, browser: data.Browser };
+  } catch {
+    return { reachable: false };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export interface BrowserSession {
   browser?: Browser;
@@ -16,15 +65,32 @@ export interface BrowserSession {
 
 export async function launchBrowserSession(config: RunConfig): Promise<BrowserSession> {
   if (config.browserCdpUrl) {
-    const browser = await chromium.connectOverCDP(config.browserCdpUrl);
+    const health = await checkCdpHealth(config.browserCdpUrl);
+    if (!health.reachable) {
+      throw new BrowserNotRunningError(config.browserCdpUrl);
+    }
+
+    let browser: Browser;
+    try {
+      browser = await chromium.connectOverCDP(config.browserCdpUrl, {
+        timeout: CDP_CONNECT_TIMEOUT_MS
+      });
+    } catch {
+      throw new StaleBrowserError(config.browserCdpUrl);
+    }
+
     const context = browser.contexts()[0] ?? (await browser.newContext());
     const page = await resolveAutomationPage(context);
+
+    // Prevent video autoplay on every navigation
+    await suppressVideoAutoplay(page);
 
     return {
       browser,
       context,
       page,
       close: async () => {
+        await page.close().catch(() => undefined);
         await browser.close().catch(() => undefined);
       }
     };
@@ -47,6 +113,7 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
       ...(windowSettings.viewport ? { viewport: windowSettings.viewport } : {})
     });
     const page = context.pages()[0] ?? (await context.newPage());
+    await suppressVideoAutoplay(page);
     return {
       context,
       page,
@@ -65,12 +132,37 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
     }
   );
   const page = await context.newPage();
+  await suppressVideoAutoplay(page);
 
   return {
     context,
     page,
     close: async () => browser.close()
   };
+}
+
+async function suppressVideoAutoplay(page: Page): Promise<void> {
+  // Inject a script that runs on every navigation to pause and mute videos
+  // as soon as they appear. This prevents autoplay noise and reduces resource usage.
+  await page.addInitScript(() => {
+    const observer = new MutationObserver(() => {
+      for (const video of document.querySelectorAll("video")) {
+        if (!video.paused) {
+          video.pause();
+        }
+        video.muted = true;
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Also override play() to prevent programmatic autoplay
+    const originalPlay = HTMLVideoElement.prototype.play;
+    HTMLVideoElement.prototype.play = function () {
+      this.muted = true;
+      this.pause();
+      return Promise.resolve();
+    };
+  });
 }
 
 async function resolveAutomationPage(context: BrowserContext): Promise<Page> {

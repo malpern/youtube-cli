@@ -685,7 +685,7 @@ final class TransferViewModel {
                 avoidDuplicateAdditions: preferences.avoidDuplicateAdditionsToPlaylists,
                 resumeRunID: resumeRunID,
                 sourceRunID: effectiveSourceRunID,
-                confirmDelete: effectiveSourceRunID != nil,
+                confirmDelete: true,
                 startIndex: preferences.resumableStartIndex > 1 ? preferences.resumableStartIndex : 1
             )
 

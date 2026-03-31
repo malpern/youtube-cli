@@ -6,6 +6,7 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
+import { loadWatchLaterInventory } from "../browser/youtube/inventory.js";
 import { openWatchLaterForDeletion, removeTopWatchLaterItem, getWatchLaterRowCount } from "../browser/youtube/removeFromWatchLater.js";
 import { openWatchLaterForSaving, saveWatchLaterItemByIndex } from "../browser/youtube/saveFromPlaylistPage.js";
 import type { InventoryItem } from "../models/types.js";
@@ -17,7 +18,7 @@ import { sliceIntoChunks, planChunkedMoveResume } from "../services/chunkPlanner
 import type { ChunkedMoveChunkPhase } from "../services/chunkPlanner.js";
 import { verifyChunkInTargetPlaylist } from "../services/chunkVerifier.js";
 import { computeMutationPacingDelay, resolveMutationPacingPolicy, resolveMutationRetryPolicy, runWithRetries } from "../services/mutation.js";
-import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, selectSourceItems, assessSourceItemPolicy } from "../services/sourceSnapshot.js";
+import { assertUsableSourceSnapshot, computeInventoryFingerprint, readSourceSnapshot, resolveSourceSnapshotPath, selectSourceItems, assessSourceItemPolicy } from "../services/sourceSnapshot.js";
 import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
 import { parsePositiveInt } from "../utils/cli.js";
 
@@ -71,99 +72,15 @@ export async function runChunkedMove(command: Command): Promise<void> {
   const operationsPath = path.join(ctx.artifacts.runDir, "chunked-operations.jsonl");
   const startedAtMs = Date.now();
 
-  const snapshotPath = resolveSourceSnapshotPath(ctx.rootDir, ctx.runId, localOptions.sourceRunId);
-  const sourceSnapshot = readSourceSnapshot(snapshotPath);
-  const allSourceItems = selectSourceItems(sourceSnapshot.items, {
-    startIndex,
-    ...(localOptions.maxItems ? { maxItems: parsePositiveInt(localOptions.maxItems, 0) } : {})
-  });
-  assertUsableSourceSnapshot(sourceSnapshot, allSourceItems.length);
-
-  const chunks = sliceIntoChunks(allSourceItems, chunkSize);
-  const totalChunks = chunks.length;
-  const totalItems = allSourceItems.length;
-
-  const resumePlan = localOptions.resume
-    ? planChunkedMoveResume({
-        checkpoint: readCheckpointFile(ctx.artifacts.checkpointPath),
-        chunks,
-        sourceSnapshotRunId: sourceSnapshot.runId,
-        targetPlaylist
-      })
-    : {
-        resumed: false,
-        completedChunks: 0,
-        currentChunkIndex: 0,
-        currentChunkPhase: "copy" as ChunkedMoveChunkPhase,
-        currentChunkCopyProcessed: 0,
-        currentChunkDeleteProcessed: 0,
-        savedCount: 0,
-        alreadySavedCount: 0,
-        expectedNonCopyableCount: 0,
-        ambiguousBlockedCount: 0,
-        removedCount: 0,
-        retryExhaustedCount: 0,
-        skippedCount: 0,
-        failedCount: 0
-      };
-
-  if (resumePlan.currentChunkIndex >= totalChunks) {
-    ctx.logEvent(PHASE, "info", "chunked-move.already-complete", "All chunks already completed", {
-      totalChunks,
-      totalItems
-    });
-    ctx.db.upsertRunState(PHASE, "complete");
-    return;
-  }
-
-  ctx.logEvent(PHASE, "info", "chunked-move.started", "Chunked move started", {
-    sourceSnapshotRunId: sourceSnapshot.runId,
-    sourceSnapshotPath: snapshotPath,
-    startIndex,
-    totalItems,
-    chunkSize,
-    totalChunks,
-    confirmDelete,
-    resumed: resumePlan.resumed,
-    resumeChunkIndex: resumePlan.currentChunkIndex,
-    resumeChunkPhase: resumePlan.currentChunkPhase,
-    retryPolicy,
-    pacingPolicy,
-    interChunkCooldownMs
-  });
-
-  if (emitJson) {
-    emitJsonLine(ctx.runId, {
-      type: "started",
-      runId: ctx.runId,
-      targetPlaylist,
-      workflow: {
-        workflowRunId: ctx.runId,
-        verifyRunId: `${ctx.runId}-verify`,
-        deleteRunId: `${ctx.runId}-delete`
-      }
-    });
-    emitJsonLine(ctx.runId, { type: "phase", phase: "inventory", status: "completed" });
-    emitJsonLine(ctx.runId, { type: "phase", phase: "copy", status: "started" });
-  }
-
-  let savedCount = resumePlan.savedCount;
-  let alreadySavedCount = resumePlan.alreadySavedCount;
-  let expectedNonCopyableCount = resumePlan.expectedNonCopyableCount;
-  let ambiguousBlockedCount = resumePlan.ambiguousBlockedCount;
-  let removedCount = resumePlan.removedCount;
-  let retryExhaustedCount = resumePlan.retryExhaustedCount;
-  let skippedCount = resumePlan.skippedCount;
-  let failedCount = resumePlan.failedCount;
-  let completedChunks = resumePlan.completedChunks;
-
+  // Single browser session for the entire run
   const session = await launchBrowserSession(ctx.config);
 
   try {
     await assertAuthenticatedYouTubeSession(session.page, ctx.config, "chunked-move.start", { navigate: true });
+
+    // Resolve the target playlist once (navigates to playlists feed)
     const target = await resolveTargetPlaylistForSavePanel(session.page, ctx.config.youtubeBaseUrl, targetRequest);
     const resolvedTargetPlaylist = target.title;
-
     const targetPlaylistUrl = await resolvePlaylistPageUrlByName(
       session.page,
       ctx.config.youtubeBaseUrl,
@@ -175,8 +92,216 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
     const watchLaterUrl = `${ctx.config.youtubeBaseUrl}/playlist?list=WL`;
 
+    // If no source snapshot is provided, capture a fresh inventory using the same session
+    let snapshotPath: string;
+    if (localOptions.sourceRunId) {
+      snapshotPath = resolveSourceSnapshotPath(ctx.rootDir, ctx.runId, localOptions.sourceRunId);
+    } else {
+      ctx.logEvent(PHASE, "info", "chunked-move.inventory-start", "Capturing fresh Watch Later inventory", {});
+      if (emitJson) {
+        emitJsonLine(ctx.runId, { type: "phase", phase: "inventory", status: "started" });
+      }
+
+      const inventoryResult = await loadWatchLaterInventory(session.page, watchLaterUrl, {
+        maxNoGrowthPasses: 3,
+        settleMs: 1500,
+        onScrollPass: ({ pass, rowCount }) => {
+          ctx.logEvent(PHASE, "info", "chunked-move.inventory-scroll", `Scanning: ${rowCount} videos found`, {
+            pass, rowCount
+          });
+          if (emitJson) {
+            emitJsonLine(ctx.runId, {
+              type: "progress",
+              phase: "inventory",
+              completed: rowCount,
+              total: 0,
+              message: `Scanning Watch Later: ${rowCount} videos found`
+            });
+          }
+        }
+      });
+
+      const fingerprint = computeInventoryFingerprint(inventoryResult.items);
+      snapshotPath = path.join(ctx.artifacts.runDir, "inventory.json");
+      fs.writeFileSync(snapshotPath, `${JSON.stringify({
+        currentUrl: session.page.url(),
+        capturedAt: new Date().toISOString(),
+        metadataVersion: 1,
+        total: inventoryResult.items.length,
+        scrollPasses: inventoryResult.scrollPasses,
+        requestedMaxItems: null,
+        bounded: false,
+        fingerprint,
+        items: inventoryResult.items
+      }, null, 2)}\n`);
+
+      ctx.logEvent(PHASE, "info", "chunked-move.inventory-complete", `Inventory captured: ${inventoryResult.items.length} videos`, {
+        total: inventoryResult.items.length,
+        scrollPasses: inventoryResult.scrollPasses
+      });
+      if (emitJson) {
+        emitJsonLine(ctx.runId, { type: "phase", phase: "inventory", status: "completed" });
+      }
+    }
+
+    const sourceSnapshot = readSourceSnapshot(snapshotPath);
+    const allSourceItems = selectSourceItems(sourceSnapshot.items, {
+      startIndex,
+      ...(localOptions.maxItems ? { maxItems: parsePositiveInt(localOptions.maxItems, 0) } : {})
+    });
+    assertUsableSourceSnapshot(sourceSnapshot, allSourceItems.length);
+
+    const chunks = sliceIntoChunks(allSourceItems, chunkSize);
+    const totalChunks = chunks.length;
+    const totalItems = allSourceItems.length;
+
+    const resumePlan = localOptions.resume
+      ? planChunkedMoveResume({
+          checkpoint: readCheckpointFile(ctx.artifacts.checkpointPath),
+          chunks,
+          sourceSnapshotRunId: sourceSnapshot.runId,
+          targetPlaylist
+        })
+      : {
+          resumed: false,
+          completedChunks: 0,
+          currentChunkIndex: 0,
+          currentChunkPhase: "copy" as ChunkedMoveChunkPhase,
+          currentChunkCopyProcessed: 0,
+          currentChunkDeleteProcessed: 0,
+          savedCount: 0,
+          alreadySavedCount: 0,
+          expectedNonCopyableCount: 0,
+          ambiguousBlockedCount: 0,
+          removedCount: 0,
+          retryExhaustedCount: 0,
+          skippedCount: 0,
+          failedCount: 0
+        };
+
+    if (resumePlan.currentChunkIndex >= totalChunks) {
+      ctx.logEvent(PHASE, "info", "chunked-move.already-complete", "All chunks already completed", {
+        totalChunks,
+        totalItems
+      });
+      ctx.db.upsertRunState(PHASE, "complete");
+      return;
+    }
+
+    ctx.logEvent(PHASE, "info", "chunked-move.started", "Chunked move started", {
+      sourceSnapshotRunId: sourceSnapshot.runId,
+      sourceSnapshotPath: snapshotPath,
+      startIndex,
+      totalItems,
+      chunkSize,
+      totalChunks,
+      confirmDelete,
+      resumed: resumePlan.resumed,
+      resumeChunkIndex: resumePlan.currentChunkIndex,
+      resumeChunkPhase: resumePlan.currentChunkPhase,
+      retryPolicy,
+      pacingPolicy,
+      interChunkCooldownMs
+    });
+
+    if (emitJson) {
+      emitJsonLine(ctx.runId, {
+        type: "started",
+        runId: ctx.runId,
+        targetPlaylist,
+        workflow: {
+          workflowRunId: ctx.runId,
+          verifyRunId: `${ctx.runId}-verify`,
+          deleteRunId: `${ctx.runId}-delete`
+        }
+      });
+      if (!localOptions.sourceRunId) {
+        // Inventory was already emitted above
+      } else {
+        emitJsonLine(ctx.runId, { type: "phase", phase: "inventory", status: "completed" });
+      }
+      emitJsonLine(ctx.runId, { type: "phase", phase: "copy", status: "started" });
+    }
+
+    let savedCount = resumePlan.savedCount;
+    let alreadySavedCount = resumePlan.alreadySavedCount;
+    let expectedNonCopyableCount = resumePlan.expectedNonCopyableCount;
+    let ambiguousBlockedCount = resumePlan.ambiguousBlockedCount;
+    let removedCount = resumePlan.removedCount;
+    let retryExhaustedCount = resumePlan.retryExhaustedCount;
+    let skippedCount = resumePlan.skippedCount;
+    let failedCount = resumePlan.failedCount;
+    let completedChunks = resumePlan.completedChunks;
+
     // Cumulative mutation counter for pacing across the entire run
     let globalMutationCount = resumePlan.savedCount + resumePlan.alreadySavedCount + resumePlan.removedCount;
+
+    // ─── Inner helpers (closures over mutable state) ─────────
+    function saveCheckpoint(
+      chunkIdx: number,
+      chunkPh: ChunkedMoveChunkPhase,
+      copyProcessed: number,
+      deleteProcessed: number
+    ): void {
+      ctx.saveCheckpoint(PHASE, {
+        sourceSnapshotRunId: sourceSnapshot.runId,
+        targetPlaylist,
+        targetPlaylistId: targetRequest.targetPlaylistId,
+        chunkSize,
+        completedChunks,
+        totalChunks,
+        currentChunkIndex: chunkIdx,
+        currentChunkPhase: chunkPh,
+        currentChunkCopyProcessed: copyProcessed,
+        currentChunkDeleteProcessed: deleteProcessed,
+        totalProcessed: savedCount + alreadySavedCount + expectedNonCopyableCount + ambiguousBlockedCount,
+        totalItems,
+        savedCount,
+        alreadySavedCount,
+        expectedNonCopyableCount,
+        ambiguousBlockedCount,
+        removedCount,
+        retryExhaustedCount,
+        skippedCount,
+        failedCount
+      });
+    }
+
+    function pauseAndExit(
+      chunkIdx: number,
+      chunkPh: ChunkedMoveChunkPhase,
+      copyProcessed: number,
+      deleteProcessed: number,
+      authError: AuthenticationRequiredError
+    ): void {
+      pauseRunForAuthentication({
+        ctx,
+        phase: PHASE,
+        error: authError,
+        payload: {
+          sourceSnapshotRunId: sourceSnapshot.runId,
+          targetPlaylist,
+          targetPlaylistId: targetRequest.targetPlaylistId,
+          chunkSize,
+          completedChunks,
+          totalChunks,
+          currentChunkIndex: chunkIdx,
+          currentChunkPhase: chunkPh,
+          currentChunkCopyProcessed: copyProcessed,
+          currentChunkDeleteProcessed: deleteProcessed,
+          totalProcessed: savedCount + alreadySavedCount + expectedNonCopyableCount + ambiguousBlockedCount,
+          totalItems,
+          savedCount,
+          alreadySavedCount,
+          expectedNonCopyableCount,
+          ambiguousBlockedCount,
+          removedCount,
+          retryExhaustedCount,
+          skippedCount,
+          failedCount
+        }
+      });
+    }
 
     for (let chunkIndex = resumePlan.currentChunkIndex; chunkIndex < totalChunks; chunkIndex++) {
       const chunk = chunks[chunkIndex]!;
@@ -653,72 +778,6 @@ export async function runChunkedMove(command: Command): Promise<void> {
     await session.close();
   }
 
-  // ─── Inner helpers (closures over mutable state) ─────────
-  function saveCheckpoint(
-    chunkIndex: number,
-    chunkPhase: ChunkedMoveChunkPhase,
-    copyProcessed: number,
-    deleteProcessed: number
-  ): void {
-    ctx.saveCheckpoint(PHASE, {
-      sourceSnapshotRunId: sourceSnapshot.runId,
-      targetPlaylist,
-      targetPlaylistId: targetRequest.targetPlaylistId,
-      chunkSize,
-      completedChunks,
-      totalChunks,
-      currentChunkIndex: chunkIndex,
-      currentChunkPhase: chunkPhase,
-      currentChunkCopyProcessed: copyProcessed,
-      currentChunkDeleteProcessed: deleteProcessed,
-      totalProcessed: savedCount + alreadySavedCount + expectedNonCopyableCount + ambiguousBlockedCount,
-      totalItems,
-      savedCount,
-      alreadySavedCount,
-      expectedNonCopyableCount,
-      ambiguousBlockedCount,
-      removedCount,
-      retryExhaustedCount,
-      skippedCount,
-      failedCount
-    });
-  }
-
-  function pauseAndExit(
-    chunkIndex: number,
-    chunkPhase: ChunkedMoveChunkPhase,
-    copyProcessed: number,
-    deleteProcessed: number,
-    error: AuthenticationRequiredError
-  ): void {
-    pauseRunForAuthentication({
-      ctx,
-      phase: PHASE,
-      error,
-      payload: {
-        sourceSnapshotRunId: sourceSnapshot.runId,
-        targetPlaylist,
-        targetPlaylistId: targetRequest.targetPlaylistId,
-        chunkSize,
-        completedChunks,
-        totalChunks,
-        currentChunkIndex: chunkIndex,
-        currentChunkPhase: chunkPhase,
-        currentChunkCopyProcessed: copyProcessed,
-        currentChunkDeleteProcessed: deleteProcessed,
-        totalProcessed: savedCount + alreadySavedCount + expectedNonCopyableCount + ambiguousBlockedCount,
-        totalItems,
-        savedCount,
-        alreadySavedCount,
-        expectedNonCopyableCount,
-        ambiguousBlockedCount,
-        removedCount,
-        retryExhaustedCount,
-        skippedCount,
-        failedCount
-      }
-    });
-  }
 }
 
 function emitJsonLine(runId: string, payload: Record<string, unknown>): void {

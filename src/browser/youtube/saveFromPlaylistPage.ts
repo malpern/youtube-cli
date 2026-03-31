@@ -171,21 +171,3 @@ async function extractRowItem(row: Locator): Promise<InventoryItem> {
   });
 }
 
-function matchesExpectedRow(expected: InventoryItem, actual: InventoryItem): boolean {
-  if (expected.videoId && actual.videoId) {
-    return expected.videoId === actual.videoId;
-  }
-
-  const expectedTitle = expected.title?.replace(/\s+/g, " ").trim().toLowerCase() ?? null;
-  const actualTitle = actual.title?.replace(/\s+/g, " ").trim().toLowerCase() ?? null;
-
-  if (expectedTitle && actualTitle) {
-    return expectedTitle === actualTitle;
-  }
-
-  return expected.unavailableKind === actual.unavailableKind;
-}
-
-function describeItem(item: InventoryItem): string {
-  return item.videoId ?? item.title ?? `${item.unavailableKind} item`;
-}
