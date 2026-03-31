@@ -36,6 +36,12 @@ export async function runInventory(command: Command): Promise<void> {
           previousRowCount,
           noGrowthPasses
         });
+        ctx.saveCheckpoint("inventory", {
+          scanning: true,
+          scrollPasses: pass,
+          rowCount,
+          noGrowthPasses
+        });
       }
     };
 

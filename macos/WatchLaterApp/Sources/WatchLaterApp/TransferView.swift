@@ -13,7 +13,13 @@ struct TransferView: View {
             return MainWindowSizing.progressHeight
         }
 
-        return model.isEditingDestination ? MainWindowSizing.expandedSetupHeight : MainWindowSizing.collapsedSetupHeight
+        if model.isEditingDestination {
+            return MainWindowSizing.expandedSetupHeight
+        }
+        if model.hasResumableRun {
+            return MainWindowSizing.resumeBannerSetupHeight
+        }
+        return MainWindowSizing.collapsedSetupHeight
     }
 
     var body: some View {
@@ -42,6 +48,9 @@ struct TransferView: View {
         }
         .onChange(of: model.isEditingDestination) { _, _ in
             MainWindowSizing.resizeMainWindow(height: preferredWindowHeight, animated: false)
+        }
+        .onChange(of: model.hasResumableRun) { _, _ in
+            MainWindowSizing.resizeMainWindow(height: preferredWindowHeight)
         }
         .onChange(of: model.shouldShowProgressCard) { _, _ in
             MainWindowSizing.resizeMainWindow(height: preferredWindowHeight)

@@ -7,10 +7,9 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
 import { openWatchLaterForDeletion, removeTopWatchLaterItem, getWatchLaterRowCount } from "../browser/youtube/removeFromWatchLater.js";
-import { ensureVideoSavedToPlaylist } from "../browser/youtube/saveToPlaylist.js";
-import type { SaveToPlaylistTimings } from "../browser/youtube/saveToPlaylist.js";
+import { openWatchLaterForSaving, saveWatchLaterItemByIndex } from "../browser/youtube/saveFromPlaylistPage.js";
 import type { InventoryItem } from "../models/types.js";
-import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
+import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession } from "../services/authGuard.js";
 import { pauseRunForAuthentication } from "../services/authPause.js";
 import { buildMoveAppPayload } from "../services/appContracts.js";
 import { readCheckpointFile } from "../services/checkpointFile.js";
@@ -18,7 +17,7 @@ import { sliceIntoChunks, planChunkedMoveResume } from "../services/chunkPlanner
 import type { ChunkedMoveChunkPhase } from "../services/chunkPlanner.js";
 import { verifyChunkInTargetPlaylist } from "../services/chunkVerifier.js";
 import { computeMutationPacingDelay, resolveMutationPacingPolicy, resolveMutationRetryPolicy, runWithRetries } from "../services/mutation.js";
-import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, selectSourceItems, assessSourceItemPolicy, partitionSourceItems } from "../services/sourceSnapshot.js";
+import { assertUsableSourceSnapshot, readSourceSnapshot, resolveSourceSnapshotPath, selectSourceItems, assessSourceItemPolicy } from "../services/sourceSnapshot.js";
 import { getTargetPlaylistRequest, resolveTargetPlaylistForSavePanel } from "../services/targetPlaylist.js";
 import { parsePositiveInt } from "../utils/cli.js";
 
@@ -201,82 +200,42 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
       // (chunk-started is implicit — item events provide progress)
 
-      // ─── COPY PHASE ─────────────────────────────────────────
+      // ─── COPY PHASE (from Watch Later playlist page) ────────
       if (chunkPhase === "copy") {
+        // Navigate to the WL playlist page once for the entire run's copy passes
+        await openWatchLaterForSaving(session.page, watchLaterUrl);
+
+        // Row offset: prior chunks that were fully deleted shift the WL rows up.
+        // If --confirm-delete is on, completed chunks had their items removed,
+        // so the current chunk's items start at row 0. If delete is off, items
+        // accumulate and we need to offset by undeleted prior chunks.
+        const deletedPriorItems = confirmDelete ? completedChunks * chunkSize : 0;
+        const chunkRowOffset = (chunkIndex * chunkSize) - deletedPriorItems;
+
         const copyStartIndex = chunkCopyProcessed;
         for (let i = copyStartIndex; i < chunk.length; i++) {
           const item = chunk[i]!;
-          const policy = assessSourceItemPolicy(item);
-
-          if (policy.policy === "expected-non-copyable") {
-            appendOperation(operationsPath, {
-              phase: "copy",
-              chunkIndex,
-              sourceIndex: item.sourceIndex,
-              title: item.title,
-              videoId: item.videoId,
-              result: "expected-non-copyable",
-              reason: policy.reason,
-              timestamp: new Date().toISOString()
-            });
-            expectedNonCopyableCount += 1;
-            skippedCount += 1;
-            chunkCopyProcessed = i + 1;
-            saveCheckpoint(chunkIndex, "copy", chunkCopyProcessed, chunkDeleteProcessed);
-            continue;
-          }
-
-          if (policy.policy === "ambiguous-unavailable") {
-            appendOperation(operationsPath, {
-              phase: "copy",
-              chunkIndex,
-              sourceIndex: item.sourceIndex,
-              title: item.title,
-              videoId: item.videoId,
-              result: "ambiguous-source-item",
-              reason: policy.reason,
-              timestamp: new Date().toISOString()
-            });
-            ambiguousBlockedCount += 1;
-            failedCount += 1;
-            chunkCopyClean = false;
-            chunkCopyProcessed = i + 1;
-            saveCheckpoint(chunkIndex, "copy", chunkCopyProcessed, chunkDeleteProcessed);
-            continue;
-          }
-
-          const videoUrl = item.videoUrl;
-          if (!videoUrl) {
-            throw new Error(`Copyable source item '${item.sourceIndex}' is missing a videoUrl`);
-          }
+          const rowIndex = chunkRowOffset + i;
 
           try {
-            const { result: response, attempts } = await runWithRetries({
+            // Periodic auth check every 10 items
+            if (i % 10 === 0) {
+              await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.periodic`);
+            }
+
+            const { result: saveResult, attempts } = await runWithRetries({
               policy: retryPolicy,
               run: async () => {
-                // Periodic auth check every 10 items (open-panel check always runs)
-                if (i % 10 === 0) {
-                  await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.periodic`);
-                }
-                try {
-                  const resp = await ensureVideoSavedToPlaylist(session.page, videoUrl, target, async () => {
-                    await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.open-save-panel`);
-                  }, { skipReopenConfirm: true });
-                  return resp;
-                } catch (error) {
-                  await throwIfAuthenticationLost(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.failure`, error);
-                  throw new Error("Authentication guard should have thrown before continuing");
-                }
+                const resp = await saveWatchLaterItemByIndex(session.page, rowIndex, target);
+                return resp;
               },
               onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
                 ctx.logEvent(PHASE, "warn", "chunked-move.copy-retry", "Retrying copy item", {
-                  chunkIndex,
-                  sourceIndex: item.sourceIndex,
-                  attempt,
-                  nextAttempt,
-                  delayMs,
-                  error: error.message
+                  chunkIndex, sourceIndex: item.sourceIndex, rowIndex,
+                  attempt, nextAttempt, delayMs, error: error.message
                 });
+                // Re-navigate to WL page after failure
+                await openWatchLaterForSaving(session.page, watchLaterUrl);
               },
               sleep: async (delayMs) => {
                 await session.page.waitForTimeout(delayMs);
@@ -284,30 +243,33 @@ export async function runChunkedMove(command: Command): Promise<void> {
               shouldRetry: (error) => !(error instanceof AuthenticationRequiredError)
             });
 
+            const actualItem = saveResult.actualItem;
             appendOperation(operationsPath, {
               phase: "copy",
               chunkIndex,
               sourceIndex: item.sourceIndex,
-              title: item.title,
-              channelName: item.channelName,
-              videoId: item.videoId,
-              videoUrl,
-              result: response.result,
+              rowIndex,
+              title: actualItem.title,
+              channelName: actualItem.channelName,
+              videoId: actualItem.videoId,
+              videoUrl: actualItem.videoUrl,
+              result: saveResult.result,
               attempts,
-              timings: response.timings,
+              durationMs: saveResult.durationMs,
               timestamp: new Date().toISOString()
             });
 
             ctx.logEvent(PHASE, "info", "chunked-move.copy-item", "Copied item", {
               chunkIndex,
               sourceIndex: item.sourceIndex,
-              title: item.title,
-              result: response.result,
+              rowIndex,
+              title: actualItem.title,
+              result: saveResult.result,
               attempts,
-              timings: response.timings
+              durationMs: saveResult.durationMs
             });
 
-            if (response.result === "saved") {
+            if (saveResult.result === "saved") {
               savedCount += 1;
             } else {
               alreadySavedCount += 1;
@@ -327,6 +289,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
               phase: "copy",
               chunkIndex,
               sourceIndex: item.sourceIndex,
+              rowIndex,
               title: item.title,
               videoId: item.videoId,
               result: "failed",
@@ -336,10 +299,8 @@ export async function runChunkedMove(command: Command): Promise<void> {
               timestamp: new Date().toISOString()
             });
             ctx.logEvent(PHASE, "error", "chunked-move.copy-failed", "Copy item failed", {
-              chunkIndex,
-              sourceIndex: item.sourceIndex,
-              error: message,
-              attempts: retryPolicy.maxAttempts
+              chunkIndex, sourceIndex: item.sourceIndex, rowIndex,
+              error: message, attempts: retryPolicy.maxAttempts
             });
             retryExhaustedCount += 1;
             failedCount += 1;
@@ -619,7 +580,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
         // Auth re-check before the next chunk
         try {
-          await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.post-cooldown`, { navigate: true });
+          await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.post-cooldown`);
         } catch (error) {
           if (error instanceof AuthenticationRequiredError) {
             pauseAndExit(chunkIndex + 1, "copy", 0, 0, error);

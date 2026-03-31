@@ -30,6 +30,10 @@ struct PhaseProgressSnapshot: Identifiable, Equatable {
             return "\(completed) / \(total)"
         }
 
+        if completed > 0 && status == .running {
+            return "\(completed) found"
+        }
+
         switch status {
         case .pending:
             return "Not started"

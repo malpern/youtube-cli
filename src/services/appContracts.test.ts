@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_CONTRACT_VERSION, buildDoctorAppPayload, buildMoveAppPayload, buildPlaylistsAppPayload } from "./appContracts.js";
+import { APP_CONTRACT_VERSION, buildDoctorAppPayload, buildMoveAppPayload, buildChunkedMoveAppPayload, buildPlaylistsAppPayload } from "./appContracts.js";
 
 describe("appContracts", () => {
   it("builds the doctor app payload with a versioned envelope", () => {
@@ -44,6 +44,23 @@ describe("appContracts", () => {
       ok: true,
       runId: "playlists-run",
       playlists: [{ title: "Old Watch", visibility: "Private" }]
+    });
+  });
+
+  it("builds chunked-move stream payloads with a versioned envelope", () => {
+    const payload = buildChunkedMoveAppPayload("chunked-run", {
+      type: "started",
+      chunkSize: 50,
+      totalItems: 4921
+    });
+
+    expect(payload).toEqual({
+      appContractVersion: APP_CONTRACT_VERSION,
+      appContractSurface: "chunked-move",
+      runId: "chunked-run",
+      type: "started",
+      chunkSize: 50,
+      totalItems: 4921
     });
   });
 

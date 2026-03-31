@@ -3,6 +3,7 @@ import AppKit
 enum MainWindowSizing {
     static let width: CGFloat = 492
     static let collapsedSetupHeight: CGFloat = 382
+    static let resumeBannerSetupHeight: CGFloat = 510
     static let expandedSetupHeight: CGFloat = 688
     static let progressHeight: CGFloat = 390
 

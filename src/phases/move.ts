@@ -208,6 +208,8 @@ async function monitorRunWorkflow(args: {
     }
   };
 
+  const inventoryCheckpointPath = path.join(args.rootDir, "runs", inventoryRunId, "checkpoint.json");
+  let lastInventoryRowCount = 0;
   const copyOperationsPath = path.join(args.rootDir, "runs", copyRunId, "copy-operations.jsonl");
   const copyCheckpointPath = path.join(args.rootDir, "runs", copyRunId, "checkpoint.json");
   const copyOperationState = { offset: 0, buffer: "" };
@@ -231,6 +233,25 @@ async function monitorRunWorkflow(args: {
       if (!state.completed && fs.existsSync(state.completionPath)) {
         state.completed = true;
         args.emitter.completePhase(phase, { childRunId: state.runId });
+      }
+    }
+
+    // Emit inventory scroll progress
+    if (phaseStates.inventory.enabled && phaseStates.inventory.started && !phaseStates.inventory.completed) {
+      const invCheckpoint = readJsonFileIfPresent<{
+        scanning?: boolean;
+        rowCount?: number;
+        scrollPasses?: number;
+      }>(inventoryCheckpointPath);
+      if (invCheckpoint?.rowCount && invCheckpoint.rowCount !== lastInventoryRowCount) {
+        lastInventoryRowCount = invCheckpoint.rowCount;
+        args.emitter.emit({
+          type: "progress",
+          phase: "inventory",
+          completed: invCheckpoint.rowCount,
+          total: 0,
+          message: `Scanning Watch Later: ${invCheckpoint.rowCount} videos found`
+        });
       }
     }
 

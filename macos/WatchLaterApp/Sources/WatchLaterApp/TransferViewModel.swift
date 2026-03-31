@@ -24,6 +24,7 @@ final class TransferViewModel {
     var currentPhase: MovePhase?
     var currentItem: MoveItemSnapshot?
     var completedItems: [MoveItemSnapshot] = []
+    var inventoryProgress = PhaseProgressSnapshot(phase: .inventory)
     var copyProgress = PhaseProgressSnapshot(phase: .copy)
     var verifyProgress = PhaseProgressSnapshot(phase: .verify)
     var deleteProgress = PhaseProgressSnapshot(phase: .delete)
@@ -66,11 +67,13 @@ final class TransferViewModel {
 
     var resumableRunDescription: String? {
         guard let resumableDestination else { return nil }
+        let startIndex = preferences.resumableStartIndex
+        let startLabel = startIndex > 1 ? " Starting at video \(startIndex)." : ""
         if resumableRunID != nil {
-            return "A previous transfer to \(resumableDestination.displayName) was interrupted."
+            return "A previous transfer to \(resumableDestination.displayName) was interrupted.\(startLabel)"
         }
         if resumableSourceRunID != nil {
-            return "A prior inventory of your Watch Later is available. Resume the transfer to \(resumableDestination.displayName)."
+            return "A prior inventory of your Watch Later is available. Resume the transfer to \(resumableDestination.displayName).\(startLabel)"
         }
         return nil
     }
@@ -148,7 +151,10 @@ final class TransferViewModel {
         case .setup:
             return "Preparing the destination playlist"
         case .inventory:
-            return "Capturing the Watch Later inventory"
+            if inventoryProgress.completed > 0 {
+                return "Scanning Watch Later: \(inventoryProgress.completed) videos found"
+            }
+            return "Scanning the Watch Later playlist…"
         case .none:
             return statusMessage
         }
@@ -664,6 +670,7 @@ final class TransferViewModel {
         currentItem = nil
         completedItems = []
         latestResult = nil
+        inventoryProgress = PhaseProgressSnapshot(phase: .inventory)
         copyProgress = PhaseProgressSnapshot(phase: .copy)
         verifyProgress = PhaseProgressSnapshot(phase: .verify)
         deleteProgress = PhaseProgressSnapshot(phase: .delete)
@@ -772,9 +779,9 @@ final class TransferViewModel {
 
     private func applyPhaseStatus(_ status: MovePhaseStatus, to phase: MovePhase) {
         switch phase {
-        case .copy, .verify, .delete:
+        case .inventory, .copy, .verify, .delete:
             updateProgress(for: phase, status: status)
-        case .setup, .inventory:
+        case .setup:
             break
         }
     }
@@ -804,13 +811,15 @@ final class TransferViewModel {
 
     private func updateProgress(for phase: MovePhase, mutate: (inout PhaseProgressSnapshot) -> Void) {
         switch phase {
+        case .inventory:
+            mutate(&inventoryProgress)
         case .copy:
             mutate(&copyProgress)
         case .verify:
             mutate(&verifyProgress)
         case .delete:
             mutate(&deleteProgress)
-        case .setup, .inventory:
+        case .setup:
             break
         }
     }
@@ -820,7 +829,11 @@ final class TransferViewModel {
         case .setup:
             statusMessage = "Preparing the destination playlist."
         case .inventory:
-            statusMessage = "Capturing the Watch Later inventory."
+            if inventoryProgress.completed > 0 {
+                statusMessage = "Scanning: \(inventoryProgress.completed) videos found"
+            } else {
+                statusMessage = "Scanning the Watch Later playlist…"
+            }
         case .copy:
             statusMessage = currentItem.map { "Now copying: \($0.title)" } ?? "Copying videos."
         case .verify:
@@ -832,13 +845,15 @@ final class TransferViewModel {
 
     private func progressSnapshotIfVisible(for phase: MovePhase) -> PhaseProgressSnapshot? {
         switch phase {
+        case .inventory:
+            return inventoryProgress.completed > 0 ? inventoryProgress : nil
         case .copy:
             return copyProgress
         case .verify:
             return verifyProgress
         case .delete:
             return deleteProgress
-        case .setup, .inventory:
+        case .setup:
             return nil
         }
     }

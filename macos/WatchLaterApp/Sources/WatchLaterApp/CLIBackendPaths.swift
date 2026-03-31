@@ -14,7 +14,7 @@ enum CLIBackendPaths {
     static let youtubeURL = URL(string: "https://www.youtube.com")!
     static let browserCDPURL = "http://127.0.0.1:9222"
     static let remoteDebuggingPort = 9222
-    static let chromeProfileURL = repositoryRootURL.appending(path: ".local/chrome-youtube-profile")
+    static let chromeProfileURL = repositoryRootURL.appending(path: ".local/canary-youtube-profile")
 
     static var commonCLIArguments: [String] {
         ["--browser-cdp-url", browserCDPURL]

@@ -2,61 +2,101 @@ import AppKit
 import Foundation
 
 enum AutomationBrowserLauncher {
-    static func openYouTube() throws {
-        let config = try loadConfig()
-        try open(configuration: config)
+    static func openYouTube(showWindow: Bool = true) throws {
+        let config = loadConfig()
+        try open(configuration: config, showWindow: showWindow)
     }
 
-    static func openLogin() throws {
-        let config = try loadConfig()
-        try open(configuration: config)
+    static func openLogin(showWindow: Bool = true) throws {
+        let config = loadConfig()
+        try open(configuration: config, showWindow: showWindow)
     }
 
-    private static func open(configuration config: CLIBrowserConfig) throws {
-        let launchPlan = try buildLaunchPlan(from: config)
+    private static func open(configuration config: CLIBrowserConfig, showWindow: Bool) throws {
+        let launchPlan = try buildLaunchPlan(from: config, showWindow: showWindow)
 
         let process = Process()
-        process.executableURL = launchPlan.executableURL
-        process.arguments = launchPlan.arguments
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [
+            "-a", launchPlan.appBundlePath,
+            launchPlan.openURL.absoluteString,
+            "--args"
+        ] + launchPlan.arguments
         try process.run()
     }
 
-    private static func loadConfig() throws -> CLIBrowserConfig {
+    private static func loadConfig() -> CLIBrowserConfig {
         let configURL = CLIBackendPaths.repositoryRootURL.appending(path: "config.local.json")
-        guard FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)) else {
-            throw AutomationBrowserLauncherError(
-                description: "Could not find config.local.json. Create it from config.example.json to open YouTube in the automation browser."
-            )
+        if FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)),
+           let data = try? Data(contentsOf: configURL),
+           let config = try? JSONDecoder().decode(CLIBrowserConfig.self, from: data) {
+            return config
         }
 
-        let data = try Data(contentsOf: configURL)
-        let decoder = JSONDecoder()
-        return try decoder.decode(CLIBrowserConfig.self, from: data)
+        return CLIBrowserConfig()
     }
 
-    private static func buildLaunchPlan(from config: CLIBrowserConfig) throws -> BrowserLaunchPlan {
+    private static func isCdpPortListening(_ port: Int) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
+    }
+
+    private static func buildLaunchPlan(from config: CLIBrowserConfig, showWindow: Bool) throws -> BrowserLaunchPlan {
         let youtubeURL = URL(string: config.youtubeBaseURL ?? "https://www.youtube.com")!
         let executableURL = try resolveExecutableURL(from: config)
         let remoteDebuggingPort = parseRemoteDebuggingPort(from: config.browserCDPURL)
         let profileDir = config.profileDir ?? CLIBackendPaths.chromeProfileURL.path(percentEncoded: false)
+        let browserAlreadyRunning = isCdpPortListening(remoteDebuggingPort)
 
         var arguments: [String] = [
             "--remote-debugging-port=\(remoteDebuggingPort)",
             "--user-data-dir=\(profileDir)"
         ]
 
-        if let width = config.browserWindowWidth, let height = config.browserWindowHeight {
-            arguments.append("--window-size=\(width),\(height)")
+        if let profileDirectory = config.profileDirectory {
+            arguments.append("--profile-directory=\(profileDirectory)")
         }
 
-        if let x = config.browserWindowPositionX, let y = config.browserWindowPositionY {
-            arguments.append("--window-position=\(x),\(y)")
+        let hasExplicitSize = config.browserWindowWidth != nil && config.browserWindowHeight != nil
+        let hasExplicitPosition = config.browserWindowPositionX != nil && config.browserWindowPositionY != nil
+
+        if hasExplicitSize {
+            arguments.append("--window-size=\(config.browserWindowWidth!),\(config.browserWindowHeight!)")
+        } else if !showWindow {
+            arguments.append("--window-size=800,600")
         }
 
-        arguments.append("--new-window")
-        arguments.append(youtubeURL.absoluteString)
+        if hasExplicitPosition {
+            arguments.append("--window-position=\(config.browserWindowPositionX!),\(config.browserWindowPositionY!)")
+        } else if !showWindow {
+            arguments.append("--window-position=-32000,-32000")
+        }
 
-        return BrowserLaunchPlan(executableURL: executableURL, arguments: arguments)
+        if !browserAlreadyRunning {
+            arguments.append("--new-window")
+        }
+
+        let appBundlePath = executableURL
+            .deletingLastPathComponent() // MacOS
+            .deletingLastPathComponent() // Contents
+            .deletingLastPathComponent() // .app
+            .path(percentEncoded: false)
+
+        return BrowserLaunchPlan(executableURL: executableURL, appBundlePath: appBundlePath, arguments: arguments, openURL: youtubeURL)
     }
 
     private static func resolveExecutableURL(from config: CLIBrowserConfig) throws -> URL {
@@ -71,8 +111,16 @@ enum AutomationBrowserLauncher {
             return URL(fileURLWithPath: channelExecutablePath)
         }
 
+        // Fall back to the first installed Chrome variant
+        for channel in ["chrome", "chrome-canary", "chrome-beta", "chrome-dev"] {
+            if let path = executablePath(for: channel),
+               FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+
         throw AutomationBrowserLauncherError(
-            description: "Could not determine the automation browser executable from config.local.json."
+            description: "Google Chrome is not installed. Install Chrome and try again."
         )
     }
 
@@ -101,18 +149,44 @@ enum AutomationBrowserLauncher {
 }
 
 private struct CLIBrowserConfig: Decodable {
-    let profileDir: String?
-    let browserChannel: String?
-    let browserExecutablePath: String?
-    let browserCDPURL: String?
-    let browserWindowWidth: Int?
-    let browserWindowHeight: Int?
-    let browserWindowPositionX: Int?
-    let browserWindowPositionY: Int?
-    let youtubeBaseURL: String?
+    var profileDir: String?
+    var profileDirectory: String?
+    var browserChannel: String?
+    var browserExecutablePath: String?
+    var browserCDPURL: String?
+    var browserWindowWidth: Int?
+    var browserWindowHeight: Int?
+    var browserWindowPositionX: Int?
+    var browserWindowPositionY: Int?
+    var youtubeBaseURL: String?
+
+    init(
+        profileDir: String? = nil,
+        profileDirectory: String? = nil,
+        browserChannel: String? = nil,
+        browserExecutablePath: String? = nil,
+        browserCDPURL: String? = nil,
+        browserWindowWidth: Int? = nil,
+        browserWindowHeight: Int? = nil,
+        browserWindowPositionX: Int? = nil,
+        browserWindowPositionY: Int? = nil,
+        youtubeBaseURL: String? = nil
+    ) {
+        self.profileDir = profileDir
+        self.profileDirectory = profileDirectory
+        self.browserChannel = browserChannel
+        self.browserExecutablePath = browserExecutablePath
+        self.browserCDPURL = browserCDPURL
+        self.browserWindowWidth = browserWindowWidth
+        self.browserWindowHeight = browserWindowHeight
+        self.browserWindowPositionX = browserWindowPositionX
+        self.browserWindowPositionY = browserWindowPositionY
+        self.youtubeBaseURL = youtubeBaseURL
+    }
 
     enum CodingKeys: String, CodingKey {
         case profileDir
+        case profileDirectory
         case browserChannel
         case browserExecutablePath
         case browserCDPURL = "browserCdpUrl"
@@ -126,7 +200,9 @@ private struct CLIBrowserConfig: Decodable {
 
 private struct BrowserLaunchPlan {
     let executableURL: URL
+    let appBundlePath: String
     let arguments: [String]
+    let openURL: URL
 }
 
 private struct AutomationBrowserLauncherError: LocalizedError {

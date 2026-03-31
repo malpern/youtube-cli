@@ -46,6 +46,16 @@ export async function openSaveToPlaylistPanel(
   const gotoStartedAt = Date.now();
   await page.goto(videoUrl, { waitUntil: "domcontentloaded" });
   const gotoMs = Date.now() - gotoStartedAt;
+
+  // Pause the video to avoid autoplay noise and reduce resource usage
+  await page.evaluate(() => {
+    const video = document.querySelector("video");
+    if (video) {
+      video.pause();
+      video.muted = true;
+    }
+  }).catch(() => undefined);
+
   await authCheck?.();
 
   const readyUiStartedAt = Date.now();
