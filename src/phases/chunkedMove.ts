@@ -332,8 +332,11 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
       // ─── COPY PHASE (from Watch Later playlist page) ────────
       if (chunkPhase === "copy") {
-        // Navigate to the WL playlist page once for the entire run's copy passes
-        await openWatchLaterForSaving(session.page, watchLaterUrl);
+        // Force a fresh WL page load at the start of each chunk.
+        // After delete, the DOM is stale — we need the updated row list.
+        await session.page.goto(watchLaterUrl, { waitUntil: "domcontentloaded" });
+        await session.page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+        await session.page.locator("ytd-playlist-video-renderer").first().waitFor({ state: "visible", timeout: 15_000 });
 
         // Row offset: prior chunks that were fully deleted shift the WL rows up.
         // If --confirm-delete is on, completed chunks had their items removed,
@@ -661,6 +664,25 @@ export async function runChunkedMove(command: Command): Promise<void> {
 
               removedCount += 1;
               globalMutationCount += 1;
+
+              if (emitJson) {
+                emitJsonLine(ctx.runId, {
+                  type: "item",
+                  phase: "delete",
+                  completed: removedCount,
+                  total: totalItems,
+                  item: {
+                    sourceIndex: item.sourceIndex,
+                    title: deleted.title ?? item.title,
+                    channelName: deleted.channelName ?? item.channelName,
+                    videoId: deleted.videoId ?? item.videoId,
+                    videoUrl: deleted.videoUrl ?? item.videoUrl,
+                    thumbnailUrl: thumbnailUrlForVideoId(deleted.videoId ?? item.videoId),
+                    result: "removed"
+                  },
+                  occurredAt: new Date().toISOString()
+                });
+              }
             } catch (error) {
               if (error instanceof AuthenticationRequiredError) {
                 pauseAndExit(chunkIndex, "delete", chunkCopyProcessed, i, error);
@@ -697,24 +719,6 @@ export async function runChunkedMove(command: Command): Promise<void> {
               await session.page.waitForTimeout(pacingDelay.totalDelayMs);
             }
 
-            if (emitJson) {
-              emitJsonLine(ctx.runId, {
-                type: "item",
-                phase: "delete",
-                completed: removedCount,
-                total: totalItems,
-                item: {
-                  sourceIndex: item.sourceIndex,
-                  title: item.title,
-                  channelName: item.channelName,
-                  videoId: item.videoId,
-                  videoUrl: item.videoUrl,
-                  thumbnailUrl: thumbnailUrlForVideoId(item.videoId),
-                  result: "removed"
-                },
-                occurredAt: new Date().toISOString()
-              });
-            }
           }
         }
       }
