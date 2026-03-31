@@ -736,7 +736,16 @@ export async function runChunkedMove(command: Command): Promise<void> {
         rateItemsPerSecond: formatRate(savedCount + alreadySavedCount, startedAtMs)
       });
 
-      // (chunk completion is implicit from item progress)
+      if (emitJson) {
+        const rate = formatRate(savedCount + alreadySavedCount, startedAtMs);
+        emitJsonLine(ctx.runId, {
+          type: "progress",
+          phase: "copy",
+          completed: savedCount + alreadySavedCount,
+          total: totalItems,
+          message: `Chunk ${completedChunks}/${totalChunks} done — ${removedCount} moved, ${rate} items/sec`
+        });
+      }
 
       // Inter-chunk cooldown (skip after the last chunk)
       if (chunkIndex < totalChunks - 1 && interChunkCooldownMs > 0) {

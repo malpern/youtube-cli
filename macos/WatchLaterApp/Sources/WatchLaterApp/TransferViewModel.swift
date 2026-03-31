@@ -166,9 +166,8 @@ final class TransferViewModel {
         }
 
         let copy = copyProgress.fraction
-        let verify = verifyProgress.fraction
         let delete = deleteProgress.fraction
-        let weightedProgress = (copy + verify + delete) / 3
+        let weightedProgress = (copy + delete) / 2
 
         switch currentPhase {
         case .setup:
@@ -201,10 +200,6 @@ final class TransferViewModel {
             return deleteProgress
         }
 
-        if verifyProgress.status == .running {
-            return verifyProgress
-        }
-
         if copyProgress.status == .running {
             return copyProgress
         }
@@ -213,7 +208,7 @@ final class TransferViewModel {
     }
 
     var completedVideoCount: Int {
-        max(copyProgress.total, verifyProgress.total, deleteProgress.total, copyProgress.completed, verifyProgress.completed, deleteProgress.completed)
+        max(copyProgress.total, deleteProgress.total, copyProgress.completed, deleteProgress.completed)
     }
 
     var completedSummaryText: String {
@@ -231,7 +226,7 @@ final class TransferViewModel {
     }
 
     var overallPhaseMarkerPositions: [Double] {
-        [0.12, 1.0 / 3.0, 2.0 / 3.0]
+        [0.5]
     }
 
     var completedMosaicItems: [MoveItemSnapshot] {
@@ -255,7 +250,7 @@ final class TransferViewModel {
     }
 
     var phaseProgressRows: [PhaseProgressSnapshot] {
-        [copyProgress, verifyProgress, deleteProgress]
+        [copyProgress, deleteProgress]
     }
 
     var accessibilityProgressSummary: String {
@@ -759,7 +754,6 @@ final class TransferViewModel {
                 clearResumableRun()
                 currentPhase = .delete
                 copyProgress.markCompletedIfNeeded()
-                verifyProgress.markCompletedIfNeeded()
                 deleteProgress.markCompletedIfNeeded()
                 statusMessage = "Migration complete."
                 NSSound(named: .init("Glass"))?.play()

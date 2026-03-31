@@ -16,13 +16,13 @@ enum MovePhase: String, CaseIterable, Identifiable, Equatable {
         case .setup:
             "Setup"
         case .inventory:
-            "Inventory"
+            "Scanning"
         case .copy:
-            "Copy"
+            "Copied"
         case .verify:
             "Verify"
         case .delete:
-            "Delete"
+            "Moved"
         }
     }
 }

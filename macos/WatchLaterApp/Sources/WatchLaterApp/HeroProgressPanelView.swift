@@ -15,7 +15,7 @@ struct HeroProgressPanelView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Migration progress")
                     .accessibilityValue(model.accessibilityProgressSummary)
-                    .accessibilityHint(model.isProgressExpanded ? "Hides copy, verify, and delete progress details." : "Shows copy, verify, and delete progress details.")
+                    .accessibilityHint(model.isProgressExpanded ? "Hides progress details." : "Shows progress details.")
                     .accessibilityInputLabels(["Migration progress", "Progress details", "Workflow progress"])
             }
         }
