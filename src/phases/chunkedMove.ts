@@ -7,7 +7,7 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
 import { loadWatchLaterInventory } from "../browser/youtube/inventory.js";
-import { openWatchLaterForDeletion, removeTopWatchLaterItem, getWatchLaterRowCount } from "../browser/youtube/removeFromWatchLater.js";
+import { openWatchLaterForDeletion, removeTopWatchLaterItemUnvalidated, getWatchLaterRowCount } from "../browser/youtube/removeFromWatchLater.js";
 import { openWatchLaterForSaving, saveWatchLaterItemByIndex } from "../browser/youtube/saveFromPlaylistPage.js";
 import type { InventoryItem } from "../models/types.js";
 import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession } from "../services/authGuard.js";
@@ -571,6 +571,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
             const item = chunk[i]!;
 
             try {
+              let removedItem: InventoryItem | undefined;
               const { attempts } = await runWithRetries({
                 policy: retryPolicy,
                 run: async () => {
@@ -578,7 +579,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
                   if (i % 10 === 0) {
                     await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.delete.${item.sourceIndex}.periodic`);
                   }
-                  await removeTopWatchLaterItem(session.page, item);
+                  removedItem = await removeTopWatchLaterItemUnvalidated(session.page);
                 },
                 onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
                   ctx.logEvent(PHASE, "warn", "chunked-move.delete-retry", "Retrying delete item", {
@@ -598,12 +599,13 @@ export async function runChunkedMove(command: Command): Promise<void> {
                 shouldRetry: (error) => !(error instanceof AuthenticationRequiredError)
               });
 
+              const deleted = removedItem ?? item;
               appendOperation(operationsPath, {
                 phase: "delete",
                 chunkIndex,
                 sourceIndex: item.sourceIndex,
-                title: item.title,
-                videoId: item.videoId,
+                title: deleted.title,
+                videoId: deleted.videoId,
                 result: "removed",
                 attempts,
                 timestamp: new Date().toISOString()
@@ -612,7 +614,8 @@ export async function runChunkedMove(command: Command): Promise<void> {
               ctx.logEvent(PHASE, "info", "chunked-move.delete-item", "Deleted item", {
                 chunkIndex,
                 sourceIndex: item.sourceIndex,
-                title: item.title,
+                title: deleted.title,
+                videoId: deleted.videoId,
                 attempts
               });
 

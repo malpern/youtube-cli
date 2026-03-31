@@ -36,6 +36,22 @@ export async function removeTopWatchLaterItem(page: Page, expectedItem: Inventor
   await waitForRemovalEvidence(page, expectedItem);
 }
 
+export async function removeTopWatchLaterItemUnvalidated(page: Page): Promise<InventoryItem> {
+  const firstRow = page.locator(ROW_SELECTOR).first();
+  await firstRow.waitFor({ state: "visible", timeout: 15_000 });
+
+  const actualItem = await extractRowItem(firstRow);
+
+  const menuButton = firstRow.locator(ROW_MENU_BUTTON_SELECTOR).filter({ visible: true }).first();
+  await menuButton.click({ timeout: 10_000 });
+
+  const removeMenuItem = await findVisibleRemoveMenuItem(page);
+  await removeMenuItem.click({ timeout: 10_000 });
+  await waitForRemovalEvidence(page, actualItem);
+
+  return actualItem;
+}
+
 export async function getWatchLaterRowCount(page: Page): Promise<number> {
   return page.locator(ROW_SELECTOR).count();
 }
