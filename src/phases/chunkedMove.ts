@@ -236,6 +236,11 @@ export async function runChunkedMove(command: Command): Promise<void> {
     // Cumulative mutation counter for pacing across the entire run
     let globalMutationCount = resumePlan.savedCount + resumePlan.alreadySavedCount + resumePlan.removedCount;
 
+    // Throttle detection: track recent copy durations
+    const recentDurations: number[] = [];
+    const THROTTLE_WINDOW = 20;
+    const THROTTLE_THRESHOLD_MS = 15_000; // warn if avg exceeds this
+
     // ─── Inner helpers (closures over mutable state) ─────────
     function saveCheckpoint(
       chunkIdx: number,
@@ -401,6 +406,32 @@ export async function runChunkedMove(command: Command): Promise<void> {
               skippedCount += 1;
             }
             globalMutationCount += 1;
+
+            // Throttle detection
+            recentDurations.push(saveResult.durationMs);
+            if (recentDurations.length > THROTTLE_WINDOW) {
+              recentDurations.shift();
+            }
+            if (recentDurations.length >= THROTTLE_WINDOW) {
+              const avgRecent = recentDurations.reduce((a, b) => a + b, 0) / recentDurations.length;
+              if (avgRecent > THROTTLE_THRESHOLD_MS) {
+                ctx.logEvent(PHASE, "warn", "chunked-move.throttle-detected", "YouTube may be throttling — item durations increasing", {
+                  avgRecentMs: Math.round(avgRecent),
+                  thresholdMs: THROTTLE_THRESHOLD_MS,
+                  chunkIndex,
+                  globalMutationCount
+                });
+                if (emitJson) {
+                  emitJsonLine(ctx.runId, {
+                    type: "progress",
+                    phase: "copy",
+                    completed: savedCount + alreadySavedCount,
+                    total: totalItems,
+                    message: `Warning: YouTube may be throttling (avg ${Math.round(avgRecent / 1000)}s/item)`
+                  });
+                }
+              }
+            }
           } catch (error) {
             if (error instanceof AuthenticationRequiredError) {
               pauseAndExit(chunkIndex, "copy", i, chunkDeleteProcessed, error);
@@ -445,6 +476,15 @@ export async function runChunkedMove(command: Command): Promise<void> {
               cooldownMs: pacingDelay.cooldownMs,
               totalDelayMs: pacingDelay.totalDelayMs
             });
+            if (emitJson && pacingDelay.cooldownMs > 0) {
+              emitJsonLine(ctx.runId, {
+                type: "progress",
+                phase: "copy",
+                completed: savedCount + alreadySavedCount,
+                total: totalItems,
+                message: `Pacing cooldown ${Math.round(pacingDelay.cooldownMs / 1000)}s to avoid rate limits…`
+              });
+            }
             await session.page.waitForTimeout(pacingDelay.totalDelayMs);
           }
 
@@ -704,6 +744,15 @@ export async function runChunkedMove(command: Command): Promise<void> {
           chunkIndex,
           cooldownMs: interChunkCooldownMs
         });
+        if (emitJson) {
+          emitJsonLine(ctx.runId, {
+            type: "progress",
+            phase: "copy",
+            completed: savedCount + alreadySavedCount,
+            total: totalItems,
+            message: `Cooling down ${Math.round(interChunkCooldownMs / 1000)}s to avoid YouTube rate limits…`
+          });
+        }
         await session.page.waitForTimeout(interChunkCooldownMs);
 
         // Auth re-check before the next chunk
