@@ -5,6 +5,7 @@ struct TopicDetailView: View {
     let topic: TopicViewModel
     @State private var videos: [VideoViewModel] = []
     @State private var searchText = ""
+    @State private var columnCount = 3
 
     private var filteredVideos: [VideoViewModel] {
         guard !searchText.isEmpty else { return videos }
@@ -14,24 +15,42 @@ struct TopicDetailView: View {
         }
     }
 
+    /// Split videos into columns for masonry layout
+    private var columns: [[VideoViewModel]] {
+        var cols = Array(repeating: [VideoViewModel](), count: columnCount)
+        for (i, video) in filteredVideos.enumerated() {
+            cols[i % columnCount].append(video)
+        }
+        return cols
+    }
+
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(filteredVideos) { video in
-                    VideoRowView(video: video, isSelected: store.selectedVideoIds.contains(video.id))
-                        .contentShape(Rectangle())
-                        .onTapGesture { toggleSelection(video.id) }
-                        .contextMenu { videoContextMenu(for: video) }
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(0..<columnCount, id: \.self) { col in
+                    LazyVStack(spacing: 12) {
+                        ForEach(columns[col]) { video in
+                            VideoCard(video: video)
+                                .contextMenu { videoContextMenu(for: video) }
+                        }
+                    }
                 }
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
+            .padding(16)
         }
         .searchable(text: $searchText, prompt: "Search videos")
         .navigationTitle(topic.name)
         .navigationSubtitle("\(topic.videoCount) videos")
         .toolbar {
             ToolbarItemGroup {
+                Picker("Columns", selection: $columnCount) {
+                    Image(systemName: "rectangle.split.2x1").tag(2)
+                    Image(systemName: "rectangle.split.3x1").tag(3)
+                    Image(systemName: "square.grid.2x2").tag(4)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 100)
+
                 if store.isLoading {
                     ProgressView().controlSize(.small)
                 }
@@ -61,11 +80,7 @@ struct TopicDetailView: View {
         Menu("Move to…") {
             ForEach(store.topics.filter({ $0.id != topic.id })) { other in
                 Button(other.name) {
-                    if store.selectedVideoIds.contains(video.id), store.selectedVideoIds.count > 1 {
-                        store.moveVideos(videoIds: store.selectedVideoIds, toTopicId: other.id)
-                    } else {
-                        store.moveVideo(videoId: video.id, toTopicId: other.id)
-                    }
+                    store.moveVideo(videoId: video.id, toTopicId: other.id)
                 }
             }
         }
@@ -75,57 +90,58 @@ struct TopicDetailView: View {
             Link("Open on YouTube", destination: url)
         }
     }
-
-    private func toggleSelection(_ videoId: String) {
-        if NSEvent.modifierFlags.contains(.command) {
-            if store.selectedVideoIds.contains(videoId) {
-                store.selectedVideoIds.remove(videoId)
-            } else {
-                store.selectedVideoIds.insert(videoId)
-            }
-        } else {
-            store.selectedVideoIds = [videoId]
-        }
-    }
 }
 
-// MARK: - Video Row
+// MARK: - Video Card
 
-struct VideoRowView: View {
+private struct VideoCard: View {
     let video: VideoViewModel
-    let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            AsyncImage(url: video.thumbnailUrl) { image in
-                image.resizable().aspectRatio(16/9, contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(.quaternary)
-                    .overlay {
-                        Image(systemName: "play.rectangle")
-                            .foregroundStyle(.tertiary)
-                    }
-            }
-            .frame(width: 160, height: 90)
-            .clipShape(.rect(cornerRadius: 6))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(video.title)
-                    .font(.body)
-                    .lineLimit(2)
-
-                if let channel = video.channelName {
-                    Text(channel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            // Thumbnail
+            AsyncImage(url: video.thumbnailUrl) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(16/9, contentMode: .fill)
+                case .failure:
+                    thumbnailPlaceholder
+                default:
+                    thumbnailPlaceholder
+                        .overlay { ProgressView().controlSize(.small) }
                 }
             }
+            .aspectRatio(16/9, contentMode: .fit)
+            .clipShape(.rect(cornerRadius: 8))
 
-            Spacer()
+            // Title
+            Text(video.title)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Channel
+            if let channel = video.channelName {
+                Text(channel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 8))
+        .padding(8)
+        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+    }
+
+    private var thumbnailPlaceholder: some View {
+        Color(nsColor: .quaternaryLabelColor)
+            .aspectRatio(16/9, contentMode: .fit)
+            .overlay {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tertiary)
+            }
     }
 }
