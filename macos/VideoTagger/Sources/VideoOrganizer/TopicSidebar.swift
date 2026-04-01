@@ -12,64 +12,53 @@ struct TopicSidebar: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            List(selection: $store.selectedTopicId) {
-                Section {
-                    ForEach(filteredTopics) { topic in
-                        TopicRow(topic: topic)
-                            .tag(topic.id)
-                            .contextMenu { contextMenu(for: topic) }
-                    }
-                } header: {
-                    HStack {
-                        Text("\(store.topics.count) Topics")
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-                        Text("\(store.totalVideoCount) videos")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
+        List(selection: $store.selectedTopicId) {
+            Section {
+                ForEach(filteredTopics) { topic in
+                    TopicRow(topic: topic)
+                        .tag(topic.id)
+                        .contextMenu { contextMenu(for: topic) }
                 }
-
-                if store.unassignedCount > 0 {
-                    Section {
-                        HStack(spacing: 10) {
-                            Image(systemName: "questionmark.folder")
-                                .font(.title3)
-                                .foregroundStyle(.orange)
-                                .frame(width: 24)
-                            Text("Unassigned")
-                            Spacer()
-                            Text("\(store.unassignedCount)")
-                                .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
+            } header: {
+                HStack {
+                    Text("\(store.topics.count) Topics")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text("\(store.totalVideoCount) videos")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .searchable(text: $searchText, placement: .sidebar, prompt: "Filter topics")
 
-            Divider()
-
-            // Settings bar
-            HStack {
+            if store.unassignedCount > 0 {
+                Section {
+                    HStack(spacing: 10) {
+                        Image(systemName: "questionmark.folder")
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                            .frame(width: 24)
+                        Text("Unassigned")
+                        Spacer()
+                        Text("\(store.unassignedCount)")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Filter topics")
+        .navigationTitle("Video Organizer")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
                 Button { showingSettings.toggle() } label: {
                     Image(systemName: "gearshape")
-                        .font(.body)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .popover(isPresented: $showingSettings, arrowEdge: .top) {
+                .popover(isPresented: $showingSettings, arrowEdge: .bottom) {
                     SettingsPopover(displaySettings: displaySettings)
                 }
-
-                Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
-        .navigationTitle("Video Organizer")
     }
 
     @ViewBuilder
