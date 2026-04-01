@@ -7,6 +7,7 @@ struct AllVideosGridView: View {
     @State private var sections: [TopicSection] = []
     @State private var allVideoIds: [String] = [] // Flat list for keyboard navigation
     @State private var selectedVideoId: String?
+    @State private var containerWidth: CGFloat = 800
     @FocusState private var isFocused: Bool
 
     private var gridColumns: [GridItem] {
@@ -15,17 +16,38 @@ struct AllVideosGridView: View {
         return [GridItem(.adaptive(minimum: min, maximum: max), spacing: 16)]
     }
 
+    /// Estimated number of columns based on container width and thumbnail size
+    private var estimatedColumnCount: Int {
+        let colWidth = displaySettings.thumbnailSize + 16 // size + spacing
+        let usableWidth = containerWidth - 40 // minus horizontal padding
+        return max(1, Int(usableWidth / colWidth))
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             scrollContent(proxy: proxy)
+                .background {
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ContainerWidthKey.self, value: geo.size.width)
+                    }
+                }
+                .onPreferenceChange(ContainerWidthKey.self) { containerWidth = $0 }
                 .focusable()
                 .focused($isFocused)
-                .onKeyPress(.downArrow) { navigateVideo(direction: 1, proxy: proxy); return .handled }
-                .onKeyPress(.upArrow) { navigateVideo(direction: -1, proxy: proxy); return .handled }
-                .onKeyPress(characters: CharacterSet(charactersIn: "j")) { _ in navigateVideo(direction: 1, proxy: proxy); return .handled }
-                .onKeyPress(characters: CharacterSet(charactersIn: "k")) { _ in navigateVideo(direction: -1, proxy: proxy); return .handled }
-                .onKeyPress(.pageDown) { navigateVideo(direction: 10, proxy: proxy); return .handled }
-                .onKeyPress(.pageUp) { navigateVideo(direction: -10, proxy: proxy); return .handled }
+                // Left/Right: move one item, wrapping rows
+                .onKeyPress(.rightArrow) { navigate(by: 1, proxy: proxy); return .handled }
+                .onKeyPress(.leftArrow) { navigate(by: -1, proxy: proxy); return .handled }
+                .onKeyPress(characters: CharacterSet(charactersIn: "l")) { _ in navigate(by: 1, proxy: proxy); return .handled }
+                .onKeyPress(characters: CharacterSet(charactersIn: "h")) { _ in navigate(by: -1, proxy: proxy); return .handled }
+                // Up/Down: move one row (jump by column count)
+                .onKeyPress(.downArrow) { navigate(by: estimatedColumnCount, proxy: proxy); return .handled }
+                .onKeyPress(.upArrow) { navigate(by: -estimatedColumnCount, proxy: proxy); return .handled }
+                .onKeyPress(characters: CharacterSet(charactersIn: "j")) { _ in navigate(by: estimatedColumnCount, proxy: proxy); return .handled }
+                .onKeyPress(characters: CharacterSet(charactersIn: "k")) { _ in navigate(by: -estimatedColumnCount, proxy: proxy); return .handled }
+                // Page up/down: jump several rows
+                .onKeyPress(.pageDown) { navigate(by: estimatedColumnCount * 4, proxy: proxy); return .handled }
+                .onKeyPress(.pageUp) { navigate(by: -estimatedColumnCount * 4, proxy: proxy); return .handled }
+                // Home/End
                 .onKeyPress(.home) { jumpToEdge(first: true, proxy: proxy); return .handled }
                 .onKeyPress(.end) { jumpToEdge(first: false, proxy: proxy); return .handled }
                 .onChange(of: selectedVideoId) { _, newId in
@@ -134,10 +156,10 @@ struct AllVideosGridView: View {
         isFocused = true
     }
 
-    private func navigateVideo(direction: Int, proxy: ScrollViewProxy) {
+    private func navigate(by offset: Int, proxy: ScrollViewProxy) {
         guard !allVideoIds.isEmpty else { return }
-        let currentIndex = selectedVideoId.flatMap { allVideoIds.firstIndex(of: $0) } ?? -1
-        let newIndex = max(0, min(allVideoIds.count - 1, currentIndex + direction))
+        let currentIndex = selectedVideoId.flatMap { allVideoIds.firstIndex(of: $0) } ?? 0
+        let newIndex = max(0, min(allVideoIds.count - 1, currentIndex + offset))
         let newId = allVideoIds[newIndex]
         selectedVideoId = newId
         withAnimation {
@@ -317,6 +339,11 @@ struct TopicSection: Identifiable {
     let topicName: String
     let videos: [VideoGridItemModel]
     var id: Int64 { topicId }
+}
+
+private struct ContainerWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 800
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 struct VideoGridItemModel: Identifiable, Equatable {
