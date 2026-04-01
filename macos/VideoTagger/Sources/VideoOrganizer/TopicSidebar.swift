@@ -2,7 +2,9 @@ import SwiftUI
 
 struct TopicSidebar: View {
     @Bindable var store: OrganizerStore
+    @Bindable var displaySettings: DisplaySettings
     @State private var searchText = ""
+    @State private var showingSettings = false
 
     private var filteredTopics: [TopicViewModel] {
         guard !searchText.isEmpty else { return store.topics }
@@ -10,42 +12,63 @@ struct TopicSidebar: View {
     }
 
     var body: some View {
-        List(selection: $store.selectedTopicId) {
-            Section {
-                ForEach(filteredTopics) { topic in
-                    TopicRow(topic: topic)
-                        .tag(topic.id)
-                        .contextMenu { contextMenu(for: topic) }
-                }
-            } header: {
-                HStack {
-                    Text("\(store.topics.count) Topics")
-                        .font(.subheadline.weight(.medium))
-                    Spacer()
-                    Text("\(store.totalVideoCount) videos")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            if store.unassignedCount > 0 {
+        VStack(spacing: 0) {
+            List(selection: $store.selectedTopicId) {
                 Section {
-                    HStack(spacing: 10) {
-                        Image(systemName: "questionmark.folder")
-                            .font(.title3)
-                            .foregroundStyle(.orange)
-                            .frame(width: 24)
-                        Text("Unassigned")
-                        Spacer()
-                        Text("\(store.unassignedCount)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                    ForEach(filteredTopics) { topic in
+                        TopicRow(topic: topic)
+                            .tag(topic.id)
+                            .contextMenu { contextMenu(for: topic) }
                     }
-                    .foregroundStyle(.secondary)
+                } header: {
+                    HStack {
+                        Text("\(store.topics.count) Topics")
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        Text("\(store.totalVideoCount) videos")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if store.unassignedCount > 0 {
+                    Section {
+                        HStack(spacing: 10) {
+                            Image(systemName: "questionmark.folder")
+                                .font(.title3)
+                                .foregroundStyle(.orange)
+                                .frame(width: 24)
+                            Text("Unassigned")
+                            Spacer()
+                            Text("\(store.unassignedCount)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Filter topics")
+
+            Divider()
+
+            // Settings bar
+            HStack {
+                Button { showingSettings.toggle() } label: {
+                    Image(systemName: "gearshape")
+                        .font(.body)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .popover(isPresented: $showingSettings, arrowEdge: .top) {
+                    SettingsPopover(displaySettings: displaySettings)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Filter topics")
         .navigationTitle("Video Organizer")
     }
 
@@ -70,6 +93,42 @@ struct TopicSidebar: View {
         Button("Delete Topic", role: .destructive) {
             store.deleteTopic(topic.id)
         }
+    }
+}
+
+// MARK: - Settings Popover
+
+private struct SettingsPopover: View {
+    @Bindable var displaySettings: DisplaySettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Display")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Thumbnail Size")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $displaySettings.thumbnailSize, in: 120...400, step: 20)
+                    Image(systemName: "photo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            Toggle("Show channel name", isOn: $displaySettings.showChannelName)
+            Toggle("Show channel icon", isOn: $displaySettings.showChannelIcon)
+        }
+        .padding(16)
+        .frame(width: 260)
     }
 }
 

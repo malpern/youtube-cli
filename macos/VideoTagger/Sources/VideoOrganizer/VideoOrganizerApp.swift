@@ -5,13 +5,14 @@ import TaggingKit
 struct VideoOrganizerApp: App {
     @State private var store: OrganizerStore?
     @State private var thumbnailCache = ThumbnailCache()
+    @State private var displaySettings = DisplaySettings()
     @State private var loadError: String?
 
     var body: some Scene {
         WindowGroup("Video Organizer") {
             Group {
                 if let store {
-                    OrganizerView(store: store, thumbnailCache: thumbnailCache)
+                    OrganizerView(store: store, thumbnailCache: thumbnailCache, displaySettings: displaySettings)
                 } else if let loadError {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle")

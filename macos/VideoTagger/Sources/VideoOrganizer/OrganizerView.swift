@@ -3,14 +3,14 @@ import SwiftUI
 struct OrganizerView: View {
     @Bindable var store: OrganizerStore
     let thumbnailCache: ThumbnailCache
-    @State private var thumbnailSize: Double = 220
+    @Bindable var displaySettings: DisplaySettings
 
     var body: some View {
         NavigationSplitView {
-            TopicSidebar(store: store)
+            TopicSidebar(store: store, displaySettings: displaySettings)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
         } detail: {
-            AllVideosGridView(store: store, thumbnailCache: thumbnailCache, thumbnailSize: $thumbnailSize)
+            AllVideosGridView(store: store, thumbnailCache: thumbnailCache, displaySettings: displaySettings)
                 .toolbar {
                     ToolbarItemGroup {
                         if store.isLoading {
@@ -24,17 +24,6 @@ struct OrganizerView: View {
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
-                        }
-
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Slider(value: $thumbnailSize, in: 120...400, step: 20)
-                                .frame(width: 100)
-                            Image(systemName: "photo")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }

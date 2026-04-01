@@ -3,15 +3,15 @@ import SwiftUI
 struct AllVideosGridView: View {
     @Bindable var store: OrganizerStore
     let thumbnailCache: ThumbnailCache
-    @Binding var thumbnailSize: Double
+    @Bindable var displaySettings: DisplaySettings
     @State private var sections: [TopicSection] = []
     @State private var allVideoIds: [String] = [] // Flat list for keyboard navigation
     @State private var selectedVideoId: String?
     @FocusState private var isFocused: Bool
 
     private var gridColumns: [GridItem] {
-        let min = thumbnailSize
-        let max = thumbnailSize + 60
+        let min = displaySettings.thumbnailSize
+        let max = displaySettings.thumbnailSize + 60
         return [GridItem(.adaptive(minimum: min, maximum: max), spacing: 16)]
     }
 
@@ -64,7 +64,7 @@ struct AllVideosGridView: View {
             LazyVGrid(columns: gridColumns, spacing: 16) {
                 ForEach(section.videos) { video in
                     Button { selectVideo(video.id, proxy: proxy) } label: {
-                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL)
+                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL, showChannel: displaySettings.showChannelName, showChannelIcon: displaySettings.showChannelIcon)
                     }
                     .buttonStyle(.plain)
                     .id(video.id)
@@ -196,6 +196,8 @@ struct VideoGridItem: View {
     let video: VideoGridItemModel
     let isSelected: Bool
     let cacheDir: URL
+    let showChannel: Bool
+    let showChannelIcon: Bool
 
     private var cachedImage: NSImage? {
         let path = cacheDir.appendingPathComponent("\(video.id).jpg")
@@ -220,11 +222,18 @@ struct VideoGridItem: View {
                 .lineLimit(2)
                 .frame(height: 32, alignment: .top)
 
-            if let channel = video.channelName {
-                Text(channel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            if showChannel, let channel = video.channelName {
+                HStack(spacing: 4) {
+                    if showChannelIcon {
+                        Image(systemName: "person.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(channel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
     }
