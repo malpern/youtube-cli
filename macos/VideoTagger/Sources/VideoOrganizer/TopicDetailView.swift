@@ -5,7 +5,6 @@ struct TopicDetailView: View {
     let topic: TopicViewModel
     @State private var videos: [VideoViewModel] = []
     @State private var searchText = ""
-    @State private var columnCount = 3
 
     private var filteredVideos: [VideoViewModel] {
         guard !searchText.isEmpty else { return videos }
@@ -15,42 +14,25 @@ struct TopicDetailView: View {
         }
     }
 
-    /// Split videos into columns for masonry layout
-    private var columns: [[VideoViewModel]] {
-        var cols = Array(repeating: [VideoViewModel](), count: columnCount)
-        for (i, video) in filteredVideos.enumerated() {
-            cols[i % columnCount].append(video)
-        }
-        return cols
-    }
+    private let gridColumns = [
+        GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 16)
+    ]
 
     var body: some View {
         ScrollView {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(0..<columnCount, id: \.self) { col in
-                    LazyVStack(spacing: 12) {
-                        ForEach(columns[col]) { video in
-                            VideoCard(video: video)
-                                .contextMenu { videoContextMenu(for: video) }
-                        }
-                    }
+            LazyVGrid(columns: gridColumns, spacing: 20) {
+                ForEach(filteredVideos) { video in
+                    VideoGridItem(video: video)
+                        .contextMenu { videoContextMenu(for: video) }
                 }
             }
-            .padding(16)
+            .padding(20)
         }
         .searchable(text: $searchText, prompt: "Search videos")
         .navigationTitle(topic.name)
-        .navigationSubtitle("\(topic.videoCount) videos")
+        .navigationSubtitle("\(filteredVideos.count) videos")
         .toolbar {
             ToolbarItemGroup {
-                Picker("Columns", selection: $columnCount) {
-                    Image(systemName: "rectangle.split.2x1").tag(2)
-                    Image(systemName: "rectangle.split.3x1").tag(3)
-                    Image(systemName: "square.grid.2x2").tag(4)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 100)
-
                 if store.isLoading {
                     ProgressView().controlSize(.small)
                 }
@@ -92,14 +74,13 @@ struct TopicDetailView: View {
     }
 }
 
-// MARK: - Video Card
+// MARK: - Grid Item
 
-private struct VideoCard: View {
+private struct VideoGridItem: View {
     let video: VideoViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Thumbnail
+        VStack(alignment: .leading, spacing: 6) {
             AsyncImage(url: video.thumbnailUrl) { phase in
                 switch phase {
                 case .success(let image):
@@ -107,35 +88,30 @@ private struct VideoCard: View {
                         .resizable()
                         .aspectRatio(16/9, contentMode: .fill)
                 case .failure:
-                    thumbnailPlaceholder
+                    placeholder
                 default:
-                    thumbnailPlaceholder
+                    placeholder
                         .overlay { ProgressView().controlSize(.small) }
                 }
             }
             .aspectRatio(16/9, contentMode: .fit)
-            .clipShape(.rect(cornerRadius: 8))
+            .clipShape(.rect(cornerRadius: 6))
 
-            // Title
             Text(video.title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.caption.weight(.medium))
+                .lineLimit(2)
+                .frame(height: 32, alignment: .top)
 
-            // Channel
             if let channel = video.channelName {
                 Text(channel)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
     }
 
-    private var thumbnailPlaceholder: some View {
+    private var placeholder: some View {
         Color(nsColor: .quaternaryLabelColor)
             .aspectRatio(16/9, contentMode: .fit)
             .overlay {
