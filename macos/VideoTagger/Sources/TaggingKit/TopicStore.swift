@@ -178,6 +178,24 @@ public final class TopicStore: Sendable {
         try db.scalar(videos.filter(videoTopicId == nil as Int64?).count)
     }
 
+    public func unassignedVideoItems() throws -> [VideoItem] {
+        try db.prepare(videos.filter(videoTopicId == nil as Int64?).order(videoSourceIndex)).map { row in
+            VideoItem(
+                sourceIndex: row[videoSourceIndex],
+                title: row[videoTitle],
+                videoUrl: row[videoUrl],
+                videoId: row[videoId],
+                channelName: row[videoChannel],
+                metadataText: nil,
+                unavailableKind: "none"
+            )
+        }
+    }
+
+    public func topicIdByName(_ name: String) throws -> Int64? {
+        try db.pluck(topics.filter(topicName == name)).map { $0[topicId] }
+    }
+
     public func totalVideoCount() throws -> Int {
         try db.scalar(videos.count)
     }
