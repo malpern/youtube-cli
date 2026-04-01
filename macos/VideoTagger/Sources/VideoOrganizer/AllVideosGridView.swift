@@ -67,6 +67,7 @@ struct AllVideosGridView: View {
                         VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL, showChannel: displaySettings.showChannelName, showChannelIcon: displaySettings.showChannelIcon)
                     }
                     .buttonStyle(.plain)
+                    .onDoubleClick { openOnYouTube(video) }
                     .id(video.id)
                     .contextMenu { videoContextMenu(for: video, topicId: section.topicId) }
                 }
@@ -74,8 +75,13 @@ struct AllVideosGridView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         } header: {
-            SectionHeaderView(name: section.topicName, count: section.videos.count, topicId: section.topicId)
-                .id("header-\(section.topicId)")
+            SectionHeaderView(
+                name: section.topicName,
+                count: section.videos.count,
+                topicId: section.topicId,
+                progress: sectionProgress(for: section)
+            )
+            .id("header-\(section.topicId)")
         }
     }
 
@@ -148,6 +154,26 @@ struct AllVideosGridView: View {
         }
     }
 
+    private func sectionProgress(for section: TopicSection) -> Double {
+        guard let selectedId = selectedVideoId,
+              let index = section.videos.firstIndex(where: { $0.id == selectedId }),
+              section.videos.count > 1 else {
+            // If selection is in this section but no match, check if it's the active section
+            if store.selectedTopicId == section.topicId {
+                return 0
+            }
+            return 0
+        }
+        return Double(index + 1) / Double(section.videos.count)
+    }
+
+    private func openOnYouTube(_ video: VideoGridItemModel) {
+        let urlString = "https://www.youtube.com/watch?v=\(video.id)"
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Context Menu
 
     @ViewBuilder
@@ -169,23 +195,35 @@ private struct SectionHeaderView: View {
     let name: String
     let count: Int
     let topicId: Int64
+    let progress: Double
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(name)
-                .font(.title3.bold())
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text(name)
+                    .font(.title3.bold())
 
-            Text("\(count)")
-                .font(.caption.monospacedDigit().bold())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.quaternary, in: Capsule())
+                Text("\(count)")
+                    .font(.caption.monospacedDigit().bold())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
 
-            Spacer()
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+
+            // Section progress bar
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Color.accentColor.opacity(progress > 0 ? 0.6 : 0))
+                    .frame(width: geo.size.width * progress)
+                    .animation(.easeOut(duration: 0.15), value: progress)
+            }
+            .frame(height: 2)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
         .background(.bar)
     }
 }
@@ -286,4 +324,47 @@ struct VideoGridItemModel: Identifiable, Equatable {
     let title: String
     let channelName: String?
     let thumbnailUrl: URL?
+}
+
+// MARK: - Double Click Modifier
+
+private struct DoubleClickModifier: ViewModifier {
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            DoubleClickView(action: action)
+        }
+    }
+}
+
+private struct DoubleClickView: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = DoubleClickNSView()
+        view.action = action
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? DoubleClickNSView)?.action = action
+    }
+}
+
+private class DoubleClickNSView: NSView {
+    var action: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        if event.clickCount == 2 {
+            action?()
+        }
+    }
+}
+
+extension View {
+    func onDoubleClick(perform action: @escaping () -> Void) -> some View {
+        modifier(DoubleClickModifier(action: action))
+    }
 }
