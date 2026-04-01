@@ -267,6 +267,8 @@ struct VideoGridItem: View {
     let showChannelIcon: Bool
     let size: Double
 
+    @State private var isHovering = false
+
     private var cachedImage: NSImage? {
         let path = cacheDir.appendingPathComponent("\(video.id).jpg")
         guard FileManager.default.fileExists(atPath: path.path) else { return nil }
@@ -309,8 +311,13 @@ struct VideoGridItem: View {
                     if isSelected {
                         RoundedRectangle(cornerRadius: cornerRadius)
                             .stroke(Color.accentColor, lineWidth: size < 200 ? 2 : 3)
+                    } else if isHovering {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(Color.primary.opacity(0.3), lineWidth: 1.5)
                     }
                 }
+                .shadow(color: isHovering ? .black.opacity(0.15) : .clear, radius: 4, y: 2)
+                .scaleEffect(isHovering ? 1.02 : 1.0)
 
             Text(video.title)
                 .font(titleFont)
@@ -331,6 +338,12 @@ struct VideoGridItem: View {
                 }
             }
         }
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+        .cursor(.pointingHand)
     }
 
     @ViewBuilder
@@ -428,5 +441,11 @@ private class DoubleClickNSView: NSView {
 extension View {
     func onDoubleClick(perform action: @escaping () -> Void) -> some View {
         modifier(DoubleClickModifier(action: action))
+    }
+
+    func cursor(_ cursor: NSCursor) -> some View {
+        onHover { inside in
+            if inside { cursor.push() } else { NSCursor.pop() }
+        }
     }
 }
