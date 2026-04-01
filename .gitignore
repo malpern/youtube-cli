@@ -5,3 +5,4 @@ runs/
 output-playlist-more-actions.png
 .DS_Store
 *.log
+macos/VideoTagger/.build/
