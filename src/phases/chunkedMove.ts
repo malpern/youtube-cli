@@ -73,12 +73,32 @@ export async function runChunkedMove(command: Command): Promise<void> {
   const startedAtMs = Date.now();
 
   // Single browser session for the entire run
+  ctx.logEvent(PHASE, "info", "chunked-move.launching-browser", "Connecting to browser...", {});
   const session = await launchBrowserSession(ctx.config);
+  ctx.logEvent(PHASE, "info", "chunked-move.browser-connected", "Browser connected", {});
 
   try {
-    await assertAuthenticatedYouTubeSession(session.page, ctx.config, "chunked-move.start", { navigate: true });
+    ctx.logEvent(PHASE, "info", "chunked-move.auth-check", "Checking authentication...", {});
+    // Quick auth check: just look for the account button on the current page.
+    // Skip navigation and networkidle — YouTube never reaches network idle.
+    const currentUrl = session.page.url();
+    if (!currentUrl.includes("youtube.com")) {
+      await session.page.goto(ctx.config.youtubeBaseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    }
+    await session.page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+    const accountBtn = session.page.locator("button#avatar-btn, button[aria-label*='Google Account'], button[aria-label*='Account menu']");
+    const signedIn = await accountBtn.count().catch(() => 0);
+    if (!signedIn) {
+      throw new AuthenticationRequiredError({
+        snapshot: { signedIn: false, accountLabel: null, currentUrl, pageTitle: "" },
+        reason: "not-signed-in-to-youtube",
+        contextLabel: "chunked-move.start"
+      });
+    }
+    ctx.logEvent(PHASE, "info", "chunked-move.auth-ok", "Authentication verified", {});
 
     // Resolve the target playlist once (navigates to playlists feed)
+    ctx.logEvent(PHASE, "info", "chunked-move.resolving-playlist", "Resolving target playlist...", {});
     const target = await resolveTargetPlaylistForSavePanel(session.page, ctx.config.youtubeBaseUrl, targetRequest);
     const resolvedTargetPlaylist = target.title;
     const targetPlaylistUrl = await resolvePlaylistPageUrlByName(

@@ -80,10 +80,9 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
     }
 
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = await resolveAutomationPage(context);
-
-    // Prevent video autoplay on every navigation
-    await suppressVideoAutoplay(page);
+    // Prefer reusing an existing page over creating a new one.
+    // In CDP mode, context.newPage() can hang on some Chrome versions.
+    const page = context.pages()[0] ?? (await context.newPage());
 
     return {
       browser,
@@ -182,7 +181,10 @@ async function resolveAutomationPage(context: BrowserContext): Promise<Page> {
 
 async function readWindowName(page: Page): Promise<string | null> {
   try {
-    return await page.evaluate(() => window.name || null);
+    return await Promise.race([
+      page.evaluate(() => window.name || null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000))
+    ]);
   } catch {
     return null;
   }
