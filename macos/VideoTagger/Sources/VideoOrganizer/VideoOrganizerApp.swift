@@ -4,13 +4,14 @@ import TaggingKit
 @main
 struct VideoOrganizerApp: App {
     @State private var store: OrganizerStore?
+    @State private var thumbnailCache = ThumbnailCache()
     @State private var loadError: String?
 
     var body: some Scene {
         WindowGroup("Video Organizer") {
             Group {
                 if let store {
-                    OrganizerView(store: store)
+                    OrganizerView(store: store, thumbnailCache: thumbnailCache)
                 } else if let loadError {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle")
@@ -39,13 +40,18 @@ struct VideoOrganizerApp: App {
             let newStore = try OrganizerStore(dbPath: dbPath, claudeClient: client)
             newStore.loadTopics()
             store = newStore
+
+            // Prefetch all thumbnails in the background
+            let allVideoIds = newStore.topics.flatMap { topic in
+                newStore.videosForTopic(topic.id).compactMap { $0.videoId.isEmpty ? nil : $0.videoId }
+            }
+            await thumbnailCache.prefetch(videoIds: allVideoIds)
         } catch {
             loadError = error.localizedDescription
         }
     }
 
     private func resolveDbPath() -> String {
-        // Look for existing DB, or create in the repo's runs directory
         let candidates = [
             "/tmp/full-tagger-v2.db",
             FileManager.default.currentDirectoryPath + "/video-tagger.db"

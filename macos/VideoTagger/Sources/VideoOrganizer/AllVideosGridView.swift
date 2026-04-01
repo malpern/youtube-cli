@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AllVideosGridView: View {
     @Bindable var store: OrganizerStore
+    let thumbnailCache: ThumbnailCache
     @Binding var thumbnailSize: Double
     @State private var sections: [TopicSection] = []
     @State private var allVideoIds: [String] = [] // Flat list for keyboard navigation
@@ -63,7 +64,7 @@ struct AllVideosGridView: View {
             LazyVGrid(columns: gridColumns, spacing: 16) {
                 ForEach(section.videos) { video in
                     Button { selectVideo(video.id, proxy: proxy) } label: {
-                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id)
+                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL)
                     }
                     .buttonStyle(.plain)
                     .id(video.id)
@@ -194,9 +195,47 @@ private struct SectionHeaderView: View {
 struct VideoGridItem: View {
     let video: VideoGridItemModel
     let isSelected: Bool
+    let cacheDir: URL
+
+    private var cachedImage: NSImage? {
+        let path = cacheDir.appendingPathComponent("\(video.id).jpg")
+        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+        return NSImage(contentsOf: path)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            thumbnailView
+                .aspectRatio(16/9, contentMode: .fit)
+                .clipShape(.rect(cornerRadius: 6))
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor, lineWidth: 3)
+                    }
+                }
+
+            Text(video.title)
+                .font(.caption.weight(.medium))
+                .lineLimit(2)
+                .frame(height: 32, alignment: .top)
+
+            if let channel = video.channelName {
+                Text(channel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if let nsImage = cachedImage {
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(16/9, contentMode: .fill)
+        } else {
             AsyncImage(url: video.thumbnailUrl) { phase in
                 switch phase {
                 case .success(let image):
@@ -209,26 +248,6 @@ struct VideoGridItem: View {
                     placeholder
                         .overlay { ProgressView().controlSize(.small) }
                 }
-            }
-            .aspectRatio(16/9, contentMode: .fit)
-            .clipShape(.rect(cornerRadius: 6))
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor, lineWidth: 3)
-                }
-            }
-
-            Text(video.title)
-                .font(.caption.weight(.medium))
-                .lineLimit(2)
-                .frame(height: 32, alignment: .top)
-
-            if let channel = video.channelName {
-                Text(channel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
         }
     }
