@@ -3,83 +3,277 @@ import Foundation
 import TaggingKit
 
 @main
-struct VideoTaggerCommand: ParsableCommand {
+struct VideoTaggerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "video-tagger",
-        abstract: "Cluster and tag YouTube videos from an inventory snapshot.",
-        version: "0.1.0"
+        abstract: "Organize YouTube videos into topics using Claude AI.",
+        version: "0.2.0",
+        subcommands: [Suggest.self, TopicsList.self, Preview.self, SplitTopic.self, MergeTopics.self, RenameTopic.self, DeleteTopic.self, Status.self]
+    )
+}
+
+// MARK: - Suggest
+
+struct Suggest: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Analyze videos and suggest topic categories."
     )
 
-    @Option(name: .shortAndLong, help: "Path to inventory.json. If omitted, finds the latest in ./runs/.")
-    var inventory: String?
+    @Option(name: .shortAndLong, help: "Path to inventory.json.")
+    var inventory: String
 
-    @Option(name: .shortAndLong, help: "Number of clusters to create.")
-    var clusters: Int = 20
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
 
-    @Option(name: .shortAndLong, help: "Output path for tags.json.")
-    var output: String = "tags.json"
+    @Option(name: .shortAndLong, help: "Number of topics to suggest.")
+    var topics: Int = 12
 
-    @Option(name: .long, help: "Max k-means iterations.")
-    var maxIterations: Int = 100
+    func run() async throws {
+        let client = try ClaudeClient()
+        let store = try TopicStore(path: db)
+        let suggester = TopicSuggester(client: client)
 
-    @Flag(name: .long, help: "Print cluster summary to stdout instead of writing JSON.")
-    var summary: Bool = false
+        let snapshot = try InventoryLoader.load(from: URL(fileURLWithPath: inventory))
+        try store.importVideos(snapshot.items)
+        print("Imported \(snapshot.items.count) videos")
+
+        print("Asking Claude to organize into \(topics) topics...")
+        let result = try await suggester.suggestTopics(
+            videos: snapshot.items,
+            targetTopicCount: topics
+        ) { batch, total in
+            print("  Batch \(batch)/\(total)...")
+        }
+
+        for topic in result.topics {
+            let topicId = try store.createTopic(name: topic.name)
+            try store.assignVideos(indices: topic.videoIndices, toTopic: topicId)
+        }
+
+        let unassigned = try store.unassignedCount()
+        print("\nCreated \(result.topics.count) topics:")
+        for topic in result.topics {
+            print(String(format: "  %4d  %@", topic.videoIndices.count, topic.name))
+        }
+        if unassigned > 0 {
+            print("  \(unassigned) unassigned")
+        }
+        print("\nSaved to \(db). Use 'topics' to list, 'preview <id>' to browse.")
+    }
+}
+
+// MARK: - Topics
+
+struct TopicsList: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "topics",
+        abstract: "List all topics with video counts."
+    )
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
 
     func run() throws {
-        let inventoryUrl = try resolveInventoryPath()
-        print("Loading inventory from \(inventoryUrl.path)...")
+        let store = try TopicStore(path: db)
+        let topics = try store.listTopics()
+        let unassigned = try store.unassignedCount()
 
-        let options = TaggingPipeline.Options(
-            clusterCount: clusters,
-            maxIterations: maxIterations
-        )
-
-        let result = try TaggingPipeline.run(
-            inventoryPath: inventoryUrl,
-            options: options
-        )
-
-        print("Embedded \(result.embeddedVideos) of \(result.totalVideos) videos")
-        print("Clustered into \(result.clusterCount) groups in \(result.iterations) iterations")
-        print()
-
-        if summary {
-            printSummary(result)
-        } else {
-            let outputUrl = URL(fileURLWithPath: output)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(result)
-            try data.write(to: outputUrl)
-            print("Tags written to \(outputUrl.path)")
+        for topic in topics {
+            print(String(format: "  [%2d] %4d videos  %@", topic.id, topic.videoCount, topic.name))
+        }
+        if unassigned > 0 {
+            print(String(format: "       %4d unassigned", unassigned))
         }
     }
+}
 
-    private func resolveInventoryPath() throws -> URL {
-        if let inventory {
-            let url = URL(fileURLWithPath: inventory)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                throw ValidationError("Inventory file not found: \(inventory)")
-            }
-            return url
+// MARK: - Preview
+
+struct Preview: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Preview videos in a topic."
+    )
+
+    @Argument(help: "Topic ID.")
+    var topicId: Int64
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    @Option(name: .shortAndLong, help: "Max videos to show.")
+    var limit: Int = 20
+
+    func run() throws {
+        let store = try TopicStore(path: db)
+        let topics = try store.listTopics()
+        guard let topic = topics.first(where: { $0.id == topicId }) else {
+            print("Topic \(topicId) not found.")
+            return
         }
 
-        let runsDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("runs")
-
-        guard let latest = try InventoryLoader.findLatestInventory(in: runsDir) else {
-            throw ValidationError("No inventory.json found in ./runs/. Specify --inventory path.")
+        let videos = try store.videosForTopic(id: topicId, limit: limit)
+        print("\(topic.name) (\(topic.videoCount) videos):")
+        for video in videos {
+            let channel = video.channelName.map { " [\($0)]" } ?? ""
+            print("  \(video.title ?? "Untitled")\(channel)")
         }
-
-        return latest
+        if topic.videoCount > limit {
+            print("  ... and \(topic.videoCount - limit) more")
+        }
     }
+}
 
-    private func printSummary(_ result: TaggingResult) {
-        for cluster in result.clusters {
-            let channels = cluster.topChannels.prefix(2).joined(separator: ", ")
-            let channelNote = channels.isEmpty ? "" : " [\(channels)]"
-            let label = cluster.label.padding(toLength: 40, withPad: " ", startingAt: 0)
-            print("\(String(format: "%3d", cluster.videoCount)) videos  \(label)\(channelNote)")
+// MARK: - Split
+
+struct SplitTopic: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "split",
+        abstract: "Split a topic into sub-topics (uses Sonnet)."
+    )
+
+    @Argument(help: "Topic ID to split.")
+    var topicId: Int64
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    @Option(name: .shortAndLong, help: "Number of sub-topics.")
+    var into: Int = 3
+
+    func run() async throws {
+        let client = try ClaudeClient()
+        let store = try TopicStore(path: db)
+        let suggester = TopicSuggester(client: client)
+
+        let topics = try store.listTopics()
+        guard let topic = topics.first(where: { $0.id == topicId }) else {
+            print("Topic \(topicId) not found.")
+            return
         }
+
+        let videos = try store.videosForTopic(id: topicId)
+        let videoItems = videos.map { v in
+            VideoItem(sourceIndex: v.sourceIndex, title: v.title, videoUrl: v.videoUrl,
+                      videoId: v.videoId, channelName: v.channelName, metadataText: nil, unavailableKind: "none")
+        }
+
+        print("Splitting \"\(topic.name)\" (\(videos.count) videos)...")
+        let subTopics = try await suggester.splitTopic(
+            topicName: topic.name, videos: videoItems,
+            videoIndices: videos.map(\.sourceIndex), targetSubTopics: into
+        )
+
+        try store.deleteTopic(id: topicId)
+        for sub in subTopics {
+            let newId = try store.createTopic(name: sub.name)
+            try store.assignVideos(indices: sub.videoIndices, toTopic: newId)
+        }
+
+        print("Split into:")
+        for sub in subTopics {
+            print(String(format: "  %4d  %@", sub.videoIndices.count, sub.name))
+        }
+    }
+}
+
+// MARK: - Merge
+
+struct MergeTopics: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "merge",
+        abstract: "Merge topics (keeps first topic's name)."
+    )
+
+    @Argument(help: "Topic IDs to merge.")
+    var topicIds: [Int64]
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    func run() throws {
+        guard topicIds.count >= 2 else {
+            print("Need at least 2 topic IDs.")
+            return
+        }
+
+        let store = try TopicStore(path: db)
+        let keepId = topicIds[0]
+
+        for mergeId in topicIds.dropFirst() {
+            try store.mergeTopic(sourceId: mergeId, intoId: keepId)
+        }
+
+        let topics = try store.listTopics()
+        if let merged = topics.first(where: { $0.id == keepId }) {
+            print("Merged into \"\(merged.name)\" (\(merged.videoCount) videos)")
+        }
+    }
+}
+
+// MARK: - Rename
+
+struct RenameTopic: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "rename",
+        abstract: "Rename a topic."
+    )
+
+    @Argument(help: "Topic ID.")
+    var topicId: Int64
+
+    @Argument(help: "New name.")
+    var name: String
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    func run() throws {
+        let store = try TopicStore(path: db)
+        try store.renameTopic(id: topicId, to: name)
+        print("Renamed to \"\(name)\"")
+    }
+}
+
+// MARK: - Delete
+
+struct DeleteTopic: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "delete",
+        abstract: "Delete a topic (videos become unassigned)."
+    )
+
+    @Argument(help: "Topic ID.")
+    var topicId: Int64
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    func run() throws {
+        let store = try TopicStore(path: db)
+        try store.deleteTopic(id: topicId)
+        print("Deleted. Videos are now unassigned.")
+    }
+}
+
+// MARK: - Status
+
+struct Status: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show database status."
+    )
+
+    @Option(name: .shortAndLong, help: "Path to the SQLite database.")
+    var db: String = "video-tagger.db"
+
+    func run() throws {
+        let store = try TopicStore(path: db)
+        let topics = try store.listTopics()
+        let total = try store.totalVideoCount()
+        let unassigned = try store.unassignedCount()
+        let pending = try store.pendingSyncPlan()
+
+        print("Videos: \(total) total, \(total - unassigned) assigned, \(unassigned) unassigned")
+        print("Topics: \(topics.count)")
+        print("Pending sync: \(pending.count) actions")
     }
 }

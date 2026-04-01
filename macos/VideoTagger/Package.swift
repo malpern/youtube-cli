@@ -10,12 +10,15 @@ let package = Package(
         .executable(name: "video-tagger", targets: ["VideoTagger"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        .package(url: "https://github.com/stephencelis/SQLite.swift.git", from: "0.15.3")
     ],
     targets: [
         .target(
             name: "TaggingKit",
-            dependencies: []
+            dependencies: [
+                .product(name: "SQLite", package: "SQLite.swift")
+            ]
         ),
         .executableTarget(
             name: "VideoTagger",

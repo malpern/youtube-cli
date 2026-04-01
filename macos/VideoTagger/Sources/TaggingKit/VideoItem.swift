@@ -10,6 +10,17 @@ public struct VideoItem: Codable, Identifiable, Sendable {
     public let metadataText: String?
     public let unavailableKind: String
 
+    public init(sourceIndex: Int, title: String?, videoUrl: String?, videoId: String?,
+                channelName: String?, metadataText: String?, unavailableKind: String) {
+        self.sourceIndex = sourceIndex
+        self.title = title
+        self.videoUrl = videoUrl
+        self.videoId = videoId
+        self.channelName = channelName
+        self.metadataText = metadataText
+        self.unavailableKind = unavailableKind
+    }
+
     public var id: String {
         videoId ?? "index-\(sourceIndex)"
     }
