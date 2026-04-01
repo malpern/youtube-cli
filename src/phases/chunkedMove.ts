@@ -7,6 +7,7 @@ import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { resolvePlaylistPageUrlByName } from "../browser/youtube/playlistDiscovery.js";
 import { loadWatchLaterInventory } from "../browser/youtube/inventory.js";
+import { cleanupUnavailableVideos } from "../browser/youtube/cleanupUnavailable.js";
 import { openWatchLaterForDeletion, removeTopWatchLaterItemUnvalidated, getWatchLaterRowCount } from "../browser/youtube/removeFromWatchLater.js";
 import { openWatchLaterForSaving, saveWatchLaterItemByIndex } from "../browser/youtube/saveFromPlaylistPage.js";
 import type { InventoryItem } from "../models/types.js";
@@ -826,6 +827,48 @@ export async function runChunkedMove(command: Command): Promise<void> {
     );
 
     ctx.logEvent(PHASE, "info", "chunked-move.complete", "Chunked move completed", summary);
+
+    // ─── CLEANUP: remove unavailable (private/deleted) videos ──
+    let cleanupRemovedCount = 0;
+    try {
+      ctx.logEvent(PHASE, "info", "chunked-move.cleanup-start", "Checking for unavailable videos...", {});
+      if (emitJson) {
+        emitJsonLine(ctx.runId, {
+          type: "progress",
+          phase: "delete",
+          completed: removedCount,
+          total: totalItems,
+          message: "Checking for unavailable videos..."
+        });
+      }
+
+      const cleanupResult = await cleanupUnavailableVideos(
+        session.page,
+        watchLaterUrl,
+        (message) => {
+          ctx.logEvent(PHASE, "info", "chunked-move.cleanup-progress", message, {});
+          if (emitJson) {
+            emitJsonLine(ctx.runId, {
+              type: "progress",
+              phase: "delete",
+              completed: removedCount + cleanupRemovedCount,
+              total: totalItems,
+              message
+            });
+          }
+        }
+      );
+
+      cleanupRemovedCount = cleanupResult.removedCount;
+      ctx.logEvent(PHASE, "info", "chunked-move.cleanup-complete", "Cleanup complete", {
+        unavailableFound: cleanupResult.unavailableFound,
+        removedCount: cleanupResult.removedCount
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.logEvent(PHASE, "warn", "chunked-move.cleanup-failed", "Cleanup failed (non-fatal)", { error: message });
+    }
+
     ctx.db.upsertRunState(PHASE, "complete");
 
     if (emitJson) {
@@ -834,6 +877,7 @@ export async function runChunkedMove(command: Command): Promise<void> {
         ok: true,
         runId: ctx.runId,
         targetPlaylist: resolvedTargetPlaylist,
+        cleanupRemovedCount,
         artifacts: { summaryPath: path.join(ctx.artifacts.runDir, "summary.json") }
       });
     }

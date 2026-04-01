@@ -17,6 +17,7 @@ import { runWorkflow } from "./phases/run.js";
 import { runPlaylists } from "./phases/playlists.js";
 import { runMove } from "./phases/move.js";
 import { runChunkedMove } from "./phases/chunkedMove.js";
+import { runCleanup } from "./phases/cleanup.js";
 import { runStatus } from "./phases/status.js";
 
 const program = new Command();
@@ -261,6 +262,14 @@ program
   .option("--json", "Emit machine-readable JSON for app integrations")
   .action(async function action() {
     await runChunkedMove(this);
+  });
+
+program
+  .command("cleanup")
+  .description("Remove unavailable (private/deleted) videos from Watch Later")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runCleanup(this);
   });
 
 await program.parseAsync(process.argv);
