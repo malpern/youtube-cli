@@ -89,7 +89,8 @@ export async function launchBrowserSession(config: RunConfig): Promise<BrowserSe
       context,
       page,
       close: async () => {
-        await page.close().catch(() => undefined);
+        // In CDP mode, don't close the page — it's the user's browser tab.
+        // Just disconnect the CDP connection.
         await browser.close().catch(() => undefined);
       }
     };
