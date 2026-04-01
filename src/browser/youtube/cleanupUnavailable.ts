@@ -40,9 +40,16 @@ export async function hasUnavailableVideos(page: Page, watchLaterUrl: string): P
  * Show unavailable videos by clicking the playlist menu → "Show unavailable videos".
  */
 export async function showUnavailableVideos(page: Page): Promise<void> {
-  // Click the playlist-level three-dot menu
-  const menuButton = page.locator(PLAYLIST_MENU_BUTTON_SELECTOR).filter({ visible: true }).first();
+  // Scroll to top to ensure header is visible
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+
+  // Click the playlist-level three-dot menu button
+  const menuButton = page.locator('ytd-playlist-header-renderer button[aria-label="Action menu"]')
+    .filter({ visible: true }).first();
+  await menuButton.waitFor({ state: "visible", timeout: 10_000 });
   await menuButton.click({ timeout: 10_000 });
+  await page.waitForTimeout(500);
 
   // Find and click "Show unavailable videos"
   const showItem = await findMenuItemByText(page, /show unavailable videos/i);
@@ -50,7 +57,9 @@ export async function showUnavailableVideos(page: Page): Promise<void> {
 
   // Wait for the page to reload/update with unavailable videos visible
   await page.waitForTimeout(2_000);
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+  // Scroll to load all rows
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForTimeout(1_500);
 }
 
 /**
@@ -63,61 +72,56 @@ export async function removeUnavailableVideos(
 ): Promise<number> {
   let removedCount = 0;
 
-  while (true) {
-    const rowCount = await page.locator(ROW_SELECTOR).count();
-    if (rowCount === 0) {
-      break;
-    }
+  // Scroll to load all rows first
+  for (let scroll = 0; scroll < 10; scroll++) {
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(800);
+  }
+  // Scroll back to top
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
 
-    const firstRow = page.locator(ROW_SELECTOR).first();
-    await firstRow.waitFor({ state: "visible", timeout: 10_000 }).catch(() => null);
+  const totalRows = await page.locator(ROW_SELECTOR).count();
 
-    // Check if this row is an unavailable video
-    const rowText = await firstRow.textContent().catch(() => "") ?? "";
+  // Scan all rows in reverse order (bottom-up avoids index shifting)
+  for (let i = totalRows - 1; i >= 0; i--) {
+    const row = page.locator(ROW_SELECTOR).nth(i);
+    const visible = await row.isVisible().catch(() => false);
+    if (!visible) continue;
+
+    const rowText = await row.textContent().catch(() => "") ?? "";
     const lowerText = rowText.toLowerCase();
     const isUnavailable =
       lowerText.includes("private video") ||
       lowerText.includes("deleted video") ||
-      lowerText.includes("unavailable");
+      lowerText.includes("[unavailable]");
 
-    if (!isUnavailable) {
-      // Hit a normal video — stop removing
-      break;
-    }
+    if (!isUnavailable) continue;
 
-    // Extract title for logging
-    const title = await firstRow.locator("a#video-title, span#video-title").textContent()
-      .catch(() => null);
+    // Scroll row into view
+    await row.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined);
+
+    const title = await row.locator("a#video-title, span#video-title, #video-title").textContent()
+      .catch(() => "unavailable video");
 
     // Click the row's three-dot menu
-    const menuButton = firstRow.locator(ROW_MENU_BUTTON_SELECTOR).filter({ visible: true }).first();
+    const menuButton = row.locator(ROW_MENU_BUTTON_SELECTOR).filter({ visible: true }).first();
     const hasMenu = await menuButton.count().catch(() => 0);
-    if (!hasMenu) {
-      // No menu button — skip this row by scrolling past it
-      await firstRow.evaluate((el) => el.remove());
-      await page.waitForTimeout(300);
-      continue;
-    }
+    if (!hasMenu) continue;
 
     await menuButton.click({ timeout: 10_000 });
 
-    // Click "Remove from Watch later" — try multiple patterns
-    const removeItem = await findRemoveMenuItem(page).catch(() => null);
+    const removeItem = await findRemoveMenuItem(page);
     if (!removeItem) {
-      // Menu opened but no remove option — close menu and skip
       await page.keyboard.press("Escape").catch(() => undefined);
-      await firstRow.evaluate((el) => el.remove());
-      await page.waitForTimeout(300);
       continue;
     }
 
     await removeItem.click({ timeout: 10_000 });
-
-    // Wait for removal
-    await waitForRowRemoval(page, rowCount);
+    await page.waitForTimeout(500);
 
     removedCount += 1;
-    onRemoved?.(removedCount, title);
+    onRemoved?.(removedCount, title?.trim() ?? null);
   }
 
   return removedCount;
