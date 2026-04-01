@@ -371,11 +371,6 @@ export async function runChunkedMove(command: Command): Promise<void> {
           const rowIndex = chunkRowOffset + i;
 
           try {
-            // Periodic auth check every 10 items
-            if (i % 10 === 0) {
-              await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.copy.${item.sourceIndex}.periodic`);
-            }
-
             const { result: saveResult, attempts } = await runWithRetries({
               policy: retryPolicy,
               run: async () => {
@@ -638,10 +633,6 @@ export async function runChunkedMove(command: Command): Promise<void> {
               const { attempts } = await runWithRetries({
                 policy: retryPolicy,
                 run: async () => {
-                  // Periodic auth check every 10 items
-                  if (i % 10 === 0) {
-                    await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.delete.${item.sourceIndex}.periodic`);
-                  }
                   removedItem = await removeTopWatchLaterItemUnvalidated(session.page);
                 },
                 onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
@@ -788,9 +779,17 @@ export async function runChunkedMove(command: Command): Promise<void> {
         }
         await session.page.waitForTimeout(interChunkCooldownMs);
 
-        // Auth re-check before the next chunk
+        // Quick auth re-check before the next chunk (no networkidle)
         try {
-          await assertAuthenticatedYouTubeSession(session.page, ctx.config, `chunk.${chunkIndex}.post-cooldown`);
+          const accountBtn = session.page.locator("button#avatar-btn, button[aria-label*='Google Account'], button[aria-label*='Account menu']");
+          const stillSignedIn = await accountBtn.count().catch(() => 0);
+          if (!stillSignedIn) {
+            throw new AuthenticationRequiredError({
+              snapshot: { signedIn: false, accountLabel: null, currentUrl: session.page.url(), pageTitle: "" },
+              reason: "not-signed-in-to-youtube",
+              contextLabel: `chunk.${chunkIndex}.post-cooldown`
+            });
+          }
         } catch (error) {
           if (error instanceof AuthenticationRequiredError) {
             pauseAndExit(chunkIndex + 1, "copy", 0, 0, error);
