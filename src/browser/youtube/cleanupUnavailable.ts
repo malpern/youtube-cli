@@ -91,10 +91,26 @@ export async function removeUnavailableVideos(
 
     // Click the row's three-dot menu
     const menuButton = firstRow.locator(ROW_MENU_BUTTON_SELECTOR).filter({ visible: true }).first();
+    const hasMenu = await menuButton.count().catch(() => 0);
+    if (!hasMenu) {
+      // No menu button — skip this row by scrolling past it
+      await firstRow.evaluate((el) => el.remove());
+      await page.waitForTimeout(300);
+      continue;
+    }
+
     await menuButton.click({ timeout: 10_000 });
 
-    // Click "Remove from Watch later"
-    const removeItem = await findRemoveMenuItem(page);
+    // Click "Remove from Watch later" — try multiple patterns
+    const removeItem = await findRemoveMenuItem(page).catch(() => null);
+    if (!removeItem) {
+      // Menu opened but no remove option — close menu and skip
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await firstRow.evaluate((el) => el.remove());
+      await page.waitForTimeout(300);
+      continue;
+    }
+
     await removeItem.click({ timeout: 10_000 });
 
     // Wait for removal
@@ -162,20 +178,29 @@ async function findMenuItemByText(page: Page, pattern: RegExp) {
 }
 
 async function findRemoveMenuItem(page: Page) {
-  const candidates = [
-    page.getByRole("menuitem", { name: /remove from watch later/i }).filter({ visible: true }).first(),
-    page.getByRole("option", { name: /remove from watch later/i }).filter({ visible: true }).first(),
-    page.locator(REMOVE_MENU_ITEM_SELECTOR).filter({ hasText: /Remove from Watch later/i }).filter({ visible: true }).first()
+  const patterns = [
+    /remove from watch later/i,
+    /remove from/i,
+    /delete/i,
+    /remove/i
   ];
 
-  for (const candidate of candidates) {
-    if (await candidate.count()) {
-      await candidate.waitFor({ state: "visible", timeout: 10_000 });
-      return candidate;
+  for (const pattern of patterns) {
+    const candidates = [
+      page.getByRole("menuitem", { name: pattern }).filter({ visible: true }).first(),
+      page.getByRole("option", { name: pattern }).filter({ visible: true }).first(),
+      page.locator(REMOVE_MENU_ITEM_SELECTOR).filter({ hasText: pattern }).filter({ visible: true }).first()
+    ];
+
+    for (const candidate of candidates) {
+      if (await candidate.count()) {
+        await candidate.waitFor({ state: "visible", timeout: 5_000 });
+        return candidate;
+      }
     }
   }
 
-  throw new Error("Remove from Watch later action was not visible");
+  return null;
 }
 
 async function waitForRowRemoval(page: Page, previousCount: number): Promise<void> {
