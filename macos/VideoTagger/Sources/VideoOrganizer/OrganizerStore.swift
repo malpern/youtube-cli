@@ -32,6 +32,9 @@ final class OrganizerStore {
             topics = summaries.map { TopicViewModel(id: $0.id, name: $0.name, videoCount: $0.videoCount) }
             totalVideoCount = try store.totalVideoCount()
             unassignedCount = try store.unassignedCount()
+            if selectedTopicId == nil, let first = topics.first {
+                selectedTopicId = first.id
+            }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
