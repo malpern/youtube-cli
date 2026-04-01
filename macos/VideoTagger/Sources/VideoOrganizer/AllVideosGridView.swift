@@ -238,13 +238,20 @@ private struct SectionHeaderView: View {
             .padding(.vertical, 10)
 
             // Section progress bar
-            GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                // Track (always visible)
                 Rectangle()
-                    .fill(Color.accentColor.opacity(progress > 0 ? 0.6 : 0))
-                    .frame(width: geo.size.width * progress)
-                    .animation(.easeOut(duration: 0.15), value: progress)
+                    .fill(Color.accentColor.opacity(0.1))
+
+                // Fill
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: geo.size.width * max(progress, 0))
+                        .animation(.easeOut(duration: 0.15), value: progress)
+                }
             }
-            .frame(height: 2)
+            .frame(height: 3)
         }
         .background(.bar)
     }
