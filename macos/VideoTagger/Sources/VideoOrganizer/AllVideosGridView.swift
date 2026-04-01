@@ -62,10 +62,12 @@ struct AllVideosGridView: View {
         Section {
             LazyVGrid(columns: gridColumns, spacing: 16) {
                 ForEach(section.videos) { video in
-                    VideoGridItem(video: video, isSelected: selectedVideoId == video.id)
-                        .id(video.id)
-                        .onTapGesture { selectVideo(video.id, proxy: proxy) }
-                        .contextMenu { videoContextMenu(for: video, topicId: section.topicId) }
+                    Button { selectVideo(video.id, proxy: proxy) } label: {
+                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id)
+                    }
+                    .buttonStyle(.plain)
+                    .id(video.id)
+                    .contextMenu { videoContextMenu(for: video, topicId: section.topicId) }
                 }
             }
             .padding(.horizontal, 20)
@@ -149,8 +151,9 @@ struct AllVideosGridView: View {
 
     @ViewBuilder
     private func videoContextMenu(for video: VideoGridItemModel, topicId: Int64) -> some View {
+        let otherTopics = store.topics.filter { $0.id != topicId }
         Menu("Move to…") {
-            ForEach(store.topics.filter({ $0.id != topicId })) { other in
+            ForEach(otherTopics) { other in
                 Button(other.name) {
                     store.moveVideo(videoId: video.id, toTopicId: other.id)
                 }

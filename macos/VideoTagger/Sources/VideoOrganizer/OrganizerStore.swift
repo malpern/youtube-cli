@@ -115,34 +115,8 @@ final class OrganizerStore {
     // MARK: - AI Operations
 
     func discoverSubTopics(for topicId: Int64, count: Int = 5) async -> [SubTopicSuggestion] {
-        guard let suggester else { return [] }
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            let videos = try store.videosForTopic(id: topicId)
-            let topic = topics.first { $0.id == topicId }
-            let videoItems = videos.map { v in
-                VideoItem(sourceIndex: v.sourceIndex, title: v.title, videoUrl: v.videoUrl,
-                          videoId: v.videoId, channelName: v.channelName, metadataText: nil, unavailableKind: "none")
-            }
-
-            let sampleTitles = videoItems.prefix(150).map { v in
-                let channel = v.channelName.map { " [\($0)]" } ?? ""
-                return "\(v.title ?? "Untitled")\(channel)"
-            }.joined(separator: "\n")
-
-            let client = ClaudeClient(apiKey: "") // Will use keychain
-            let response = try await (suggester as TopicSuggester).renameSuggestion(
-                currentName: topic?.name ?? "",
-                sampleTitles: videoItems.prefix(20).compactMap(\.title)
-            )
-            // For now return empty — we'll wire this up properly
-            return []
-        } catch {
-            errorMessage = error.localizedDescription
-            return []
-        }
+        // TODO: Wire up to TopicSuggester.splitTopic for sub-topic discovery
+        return []
     }
 
     func splitTopic(_ topicId: Int64, into count: Int = 3) async {
