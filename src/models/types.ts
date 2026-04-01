@@ -1,4 +1,19 @@
-export type Phase = "login" | "doctor" | "setup" | "probe-selectors" | "inventory" | "copy" | "verify" | "repair" | "delete" | "performance";
+export type Phase =
+  | "login"
+  | "export-storage-state"
+  | "doctor"
+  | "setup"
+  | "probe-selectors"
+  | "inventory"
+  | "copy"
+  | "verify"
+  | "repair"
+  | "delete"
+  | "performance"
+  | "run"
+  | "playlists"
+  | "move"
+  | "chunked-move";
 
 export interface RunConfig {
   profileDir: string | undefined;
@@ -7,6 +22,12 @@ export interface RunConfig {
   browserChannel: string | undefined;
   browserExecutablePath: string | undefined;
   browserCdpUrl: string | undefined;
+  browserWindowWidth: number | undefined;
+  browserWindowHeight: number | undefined;
+  browserWindowPositionX: number | undefined;
+  browserWindowPositionY: number | undefined;
+  browserViewportWidth: number | undefined;
+  browserViewportHeight: number | undefined;
   headless: boolean;
   artifactsDirName: string;
   stopOnAccountMismatch: boolean;
@@ -29,7 +50,7 @@ export interface RunArtifacts {
 export interface RunStateRow {
   runId: string;
   phase: Phase;
-  status: "running" | "complete" | "failed";
+  status: "running" | "paused" | "complete" | "failed";
   startedAt: string;
   updatedAt: string;
 }
@@ -94,8 +115,12 @@ export interface SourceSnapshot {
   runId: string;
   currentUrl: string;
   capturedAt: string;
+  metadataVersion: number | null;
+  metadataComplete: boolean;
   total: number;
   scrollPasses: number;
+  requestedMaxItems: number | null;
+  bounded: boolean;
   fingerprint: InventoryFingerprint;
   items: InventoryItem[];
 }
@@ -116,6 +141,16 @@ export interface DeletionEligibilityDecision {
   reasons: string[];
 }
 
+export interface ProductionDeleteAuthorization {
+  authorized: boolean;
+  reasons: string[];
+  verificationRunId: string;
+  sourceSnapshotRunId: string | null;
+  targetPlaylist: string;
+  verificationMode: "full" | "subset";
+  verifiedAt: string;
+}
+
 export interface NumericStats {
   count: number;
   min: number | null;
@@ -131,6 +166,7 @@ export interface CopyPerformanceRunReport {
   startedAt: string | null;
   completedAt: string | null;
   itemCount: number;
+  timingSampleCount: number;
   resultCounts: Record<string, number>;
   totalDurationMs: number | null;
   startupLatencyMs: number | null;
@@ -138,6 +174,8 @@ export interface CopyPerformanceRunReport {
   overallRateItemsPerSecond: number | null;
   itemLatencyMs: NumericStats;
   itemLatencyByResult: Record<string, NumericStats>;
+  timingBreakdownByStep: Record<string, NumericStats>;
+  timingBreakdownByResult: Record<string, Record<string, NumericStats>>;
 }
 
 export interface CopyPerformanceReport {
@@ -151,5 +189,42 @@ export interface CopyPerformanceReport {
     overallRateItemsPerSecond: NumericStats;
     itemLatencyMs: NumericStats;
     itemLatencyByResult: Record<string, NumericStats>;
+    timingBreakdownByStep: Record<string, NumericStats>;
+    timingBreakdownByResult: Record<string, Record<string, NumericStats>>;
   };
+}
+
+export interface FullRunPreflightReport {
+  generatedAt: string;
+  sourceSnapshotRunId: string;
+  sourceSnapshotMetadataVersion: number | null;
+  sourceSnapshotMetadataComplete: boolean;
+  sourceTotal: number;
+  sourceSnapshotBounded: boolean;
+  sourceSnapshotRequestedMaxItems: number | null;
+  copyableCount: number;
+  expectedNonCopyableCount: number;
+  ambiguousCount: number;
+  snapshotEligibleForProductionAuthorization: boolean;
+  snapshotBlockingReasons: string[];
+  performanceBaselineRunIds: string[];
+  latencyBasis: {
+    resultBucket: string | null;
+    meanMsPerItem: number | null;
+    p95MsPerItem: number | null;
+  };
+  estimatedCopyDuration: {
+    meanSeconds: number | null;
+    meanHours: number | null;
+    p95Seconds: number | null;
+    p95Hours: number | null;
+  };
+}
+
+export interface WatchLaterCapacitySummary {
+  videoCount: number | null;
+  maxItems: number;
+  remainingCapacity: number | null;
+  nearCapacity: boolean;
+  atCapacity: boolean;
 }

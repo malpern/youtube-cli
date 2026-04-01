@@ -6,11 +6,9 @@ import type { Command } from "commander";
 import { createRunContext } from "../app/runContext.js";
 import { launchBrowserSession } from "../browser/launch.js";
 import { ensurePlaylistExistsFromVideo } from "../browser/youtube/saveToPlaylist.js";
-
-function getTargetPlaylist(command: Command): string {
-  const opts = command.opts<{ targetPlaylist?: string }>();
-  return opts.targetPlaylist?.trim() || "Old Watch";
-}
+import { resolveTargetPlaylistForSavePanel, getTargetPlaylistRequest } from "../services/targetPlaylist.js";
+import { AuthenticationRequiredError, assertAuthenticatedYouTubeSession, throwIfAuthenticationLost } from "../services/authGuard.js";
+import { pauseRunForAuthentication } from "../services/authPause.js";
 
 async function getFirstWatchLaterVideoUrl(page: import("playwright").Page, watchLaterUrl: string): Promise<string> {
   await page.goto(watchLaterUrl, { waitUntil: "domcontentloaded" });
@@ -26,7 +24,10 @@ async function getFirstWatchLaterVideoUrl(page: import("playwright").Page, watch
 
 export async function runSetup(command: Command): Promise<void> {
   const ctx = createRunContext(command, "setup");
-  const targetPlaylist = getTargetPlaylist(command);
+  const localOptions = command.opts<{ targetPlaylist?: string; targetPlaylistId?: string }>();
+  const targetRequest = getTargetPlaylistRequest(localOptions);
+  const targetPlaylist = targetRequest.targetPlaylist;
+  const targetPlaylistId = targetRequest.targetPlaylistId;
   const watchLaterUrl = `${ctx.config.youtubeBaseUrl}/playlist?list=WL`;
   const setupPath = path.join(ctx.artifacts.runDir, "setup.json");
   const screenshotPath = path.join(ctx.artifacts.screenshotsDir, "setup-save-panel.png");
@@ -34,16 +35,24 @@ export async function runSetup(command: Command): Promise<void> {
   const session = await launchBrowserSession(ctx.config);
 
   try {
+    await assertAuthenticatedYouTubeSession(session.page, ctx.config, "setup.start", { navigate: true });
     const firstVideoUrl = await getFirstWatchLaterVideoUrl(session.page, watchLaterUrl);
+    const target = await resolveTargetPlaylistForSavePanel(session.page, ctx.config.youtubeBaseUrl, targetRequest);
+    const resolvedTargetPlaylist = target.title;
     ctx.logEvent("setup", "info", "setup.source-video", "Resolved first Watch Later video", {
-      firstVideoUrl
+      firstVideoUrl,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId
     });
 
-    const outcome = await ensurePlaylistExistsFromVideo(session.page, firstVideoUrl, targetPlaylist);
+    const outcome = await ensurePlaylistExistsFromVideo(session.page, firstVideoUrl, target, async () => {
+      await assertAuthenticatedYouTubeSession(session.page, ctx.config, "setup.open-save-panel");
+    });
     await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
 
     const payload = {
-      targetPlaylist,
+      targetPlaylist: resolvedTargetPlaylist,
+      targetPlaylistId,
       firstVideoUrl,
       outcome,
       screenshotPath
@@ -54,9 +63,39 @@ export async function runSetup(command: Command): Promise<void> {
     ctx.logEvent("setup", "info", "setup.complete", "Setup completed", payload);
     ctx.db.upsertRunState("setup", "complete");
   } catch (error) {
+    if (error instanceof AuthenticationRequiredError) {
+      pauseRunForAuthentication({
+        ctx,
+        phase: "setup",
+        error,
+        payload: {
+          targetPlaylist,
+          targetPlaylistId
+        }
+      });
+      return;
+    }
+
+    try {
+      await throwIfAuthenticationLost(session.page, ctx.config, "setup.failed", error);
+    } catch (authError) {
+      if (authError instanceof AuthenticationRequiredError) {
+        pauseRunForAuthentication({
+          ctx,
+          phase: "setup",
+          error: authError,
+          payload: {
+            targetPlaylist,
+            targetPlaylistId
+          }
+        });
+        return;
+      }
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     await session.page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
-    ctx.logEvent("setup", "error", "setup.failed", "Setup failed", { error: message, targetPlaylist });
+    ctx.logEvent("setup", "error", "setup.failed", "Setup failed", { error: message, targetPlaylist, targetPlaylistId });
     ctx.db.upsertRunState("setup", "failed");
     throw error;
   } finally {

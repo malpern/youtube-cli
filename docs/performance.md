@@ -11,26 +11,36 @@ npx tsx src/cli.ts copy-performance \
   --copy-run-id <copy-run-id-1> <copy-run-id-2> ...
 ```
 
+Newer copy runs may also include per-step save timings in the same report:
+
+- `timingSampleCount`
+- `timingBreakdownByStep`
+- `timingBreakdownByResult`
+
+Older runs remain valid inputs, but those fields will be empty when the source `copy-operations.jsonl` did not record step timings yet.
+
 Latest aggregate report:
 
-- [copy-performance.json](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-03-23-713Z-ddrmnl/copy-performance.json)
+- [copy-performance.json](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-03-23-713Z-ddrmnl/copy-performance.json)
+- backward-compatible re-analysis of the speed-pass runs:
+  - [copy-performance.json](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T19-23-08-790Z-sgbk6o/copy-performance.json)
 
 ## Latest measured runs
 
 Source snapshot:
 
-- [2026-03-21T15-48-08-531Z-42r2i3](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T15-48-08-531Z-42r2i3)
+- [2026-03-21T15-48-08-531Z-42r2i3](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T15-48-08-531Z-42r2i3)
 
 Measured copy runs:
 
 - mixed run, `10 already-saved + 15 saved`:
-  - [2026-03-21T15-48-26-211Z-wrelvg](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T15-48-26-211Z-wrelvg)
+  - [2026-03-21T15-48-26-211Z-wrelvg](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T15-48-26-211Z-wrelvg)
 - no-op run, `25 already-saved`:
-  - [2026-03-21T15-53-33-484Z-w5qpye](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T15-53-33-484Z-w5qpye)
+  - [2026-03-21T15-53-33-484Z-w5qpye](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T15-53-33-484Z-w5qpye)
 - no-op run, `25 already-saved`:
-  - [2026-03-21T16-01-07-497Z-g9fje8](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-01-07-497Z-g9fje8)
+  - [2026-03-21T16-01-07-497Z-g9fje8](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-01-07-497Z-g9fje8)
 - mixed run, `25 already-saved + 25 saved`:
-  - [2026-03-21T16-09-28-794Z-2t9bq4](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-09-28-794Z-2t9bq4)
+  - [2026-03-21T16-09-28-794Z-2t9bq4](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-09-28-794Z-2t9bq4)
 
 ## Findings
 
@@ -88,19 +98,19 @@ Across both no-op runs:
 
 50-item source snapshot:
 
-- [2026-03-21T16-09-14-720Z-a8eoek](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-09-14-720Z-a8eoek)
+- [2026-03-21T16-09-14-720Z-a8eoek](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-09-14-720Z-a8eoek)
 
 50-item copy run:
 
-- [2026-03-21T16-09-28-794Z-2t9bq4](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-09-28-794Z-2t9bq4)
+- [2026-03-21T16-09-28-794Z-2t9bq4](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-09-28-794Z-2t9bq4)
 
 50-item verify run:
 
-- [2026-03-21T16-18-06-290Z-z3412v](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-18-06-290Z-z3412v)
+- [2026-03-21T16-18-06-290Z-z3412v](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-18-06-290Z-z3412v)
 
 50-item performance report:
 
-- [2026-03-21T16-18-18-063Z-573ri8/copy-performance.json](/Users/malpern/local-code/youtube-watchlist/runs/2026-03-21T16-18-18-063Z-573ri8/copy-performance.json)
+- [2026-03-21T16-18-18-063Z-573ri8/copy-performance.json](/Users/malpern/local-code/youtube-cli/runs/2026-03-21T16-18-18-063Z-573ri8/copy-performance.json)
 
 Measured result:
 
@@ -139,3 +149,4 @@ Comparison to the 25-item mixed run:
 - The no-op path is much cheaper at about `5s` per item, which is useful for resume and repair.
 - The measured no-op variability is acceptable.
 - The `saved` path appears broadly stable through `50` items, but the outlier tail has widened enough that future deletion and full-run planning should assume occasional `20s+` item latencies.
+- The next live run should produce substep timing breakdowns automatically, which will let us answer whether `goto`, UI readiness, panel entry, selection, or reopen-confirm dominates the `saved` path.

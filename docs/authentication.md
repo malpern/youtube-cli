@@ -31,7 +31,7 @@ Use a dedicated browser profile for this project only.
 
 Current validated profile path:
 
-`/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile`
+`/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile`
 
 Do not automate against a normal daily-use Chrome profile.
 
@@ -49,15 +49,35 @@ Use plain `Google Chrome` with a remote debugging port:
 ```bash
 open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir="/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile" \
+  --user-data-dir="/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile" \
   https://www.youtube.com
 ```
+
+Or use the repo helper, which applies the same pattern with the configured profile, CDP port, and window bounds:
+
+```bash
+npm run browser:open
+```
+
+The macOS app uses the same dedicated browser-launch shape for its login/open-browser actions, so local app-driven auth now stays aligned with the CLI helper instead of opening a different browser session.
+
+On macOS, put that dedicated browser window on its own Space if you want to keep headed automation out of the user’s main desktop. This is more reliable than trying to hide or minimize the automation window while the CLI is driving it.
 
 After the browser is open and signed in, attach the CLI with:
 
 ```bash
 npx tsx src/cli.ts doctor --browser-cdp-url http://127.0.0.1:9222
 ```
+
+If you want to feed a short headless check from that trusted live browser session, export Playwright storage state from the CDP-attached browser:
+
+```bash
+npx tsx src/cli.ts export-storage-state \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --output .local/youtube-storage-state.json
+```
+
+That gives you a refreshed storage-state file without making headless mode the primary local auth model.
 
 ## What Not To Do
 
@@ -131,6 +151,47 @@ Action:
 
 1. Start Chrome manually on the dedicated profile with `--remote-debugging-port=9222`.
 2. Sign in once if needed.
-3. Keep that Chrome window open for the whole development session.
+3. Keep that Chrome window open for the whole development session, ideally on its own Space.
 4. Run all CLI commands with `--browser-cdp-url http://127.0.0.1:9222`.
 5. Do not run profile-owning commands in parallel.
+
+For release or short non-interactive headless checks:
+
+1. Refresh `.local/youtube-storage-state.json` from the trusted CDP browser with `export-storage-state`.
+2. Point the headless run at that storage-state file.
+3. If auth drifts, repair it in the persistent headed CDP browser first instead of trying to reauth headlessly.
+
+## Post-Cooldown Resume
+
+If Google pauses the session again, use this order:
+
+1. Stop retrying immediately and wait out the cooldown. Plan for `48 hours` minimum; if Google still blocks sign-in, use `7 days` from the last failed attempt as the safer bound.
+2. Open plain `Google Chrome` on the same dedicated profile and the same network, then sign in manually.
+3. Keep that browser open and confirm `doctor` reports signed-in YouTube state over CDP.
+4. Run a tiny validation copy against the paused source snapshot, such as `--max-items 5`, before restarting the full job.
+5. Resume the full copy from the existing checkpoint and source snapshot with `--resume` on the paused copy run id.
+
+Example commands:
+
+```bash
+open -na "Google Chrome" --args \
+  --remote-debugging-port=9222 \
+  --user-data-dir="/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile" \
+  https://www.youtube.com
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts doctor \
+  --browser-cdp-url http://127.0.0.1:9222
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts copy \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --source-run-id 2026-03-21T18-24-08-552Z-vvihmn \
+  --start-index 70 \
+  --max-items 5
+
+PATH="/opt/homebrew/opt/node/bin:$PATH" npx tsx src/cli.ts \
+  --run-id 2026-03-21T18-40-18-882Z-867mr0 \
+  copy \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --source-run-id 2026-03-21T18-24-08-552Z-vvihmn \
+  --resume
+```

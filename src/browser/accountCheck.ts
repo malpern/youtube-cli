@@ -9,6 +9,8 @@ export interface AccountSnapshot {
 
 export interface AccountSnapshotOptions {
   navigate?: boolean;
+  waitForNetworkIdle?: boolean;
+  waitTimeoutMs?: number;
 }
 
 export async function captureAccountSnapshot(
@@ -16,14 +18,16 @@ export async function captureAccountSnapshot(
   youtubeBaseUrl: string,
   options: AccountSnapshotOptions = {}
 ): Promise<AccountSnapshot> {
-  const { navigate = true } = options;
+  const { navigate = true, waitForNetworkIdle = true, waitTimeoutMs = 15_000 } = options;
 
   if (navigate) {
     await page.goto(youtubeBaseUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
   }
 
-  await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+  await page.waitForLoadState("domcontentloaded", { timeout: waitTimeoutMs }).catch(() => undefined);
+  if (waitForNetworkIdle) {
+    await page.waitForLoadState("networkidle", { timeout: waitTimeoutMs }).catch(() => undefined);
+  }
 
   const accountButton = page.locator("button#avatar-btn, button[aria-label*='Google Account'], button[aria-label*='Account menu']");
   const signInLink = page.getByRole("link", { name: /sign in/i });

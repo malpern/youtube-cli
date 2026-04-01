@@ -2,6 +2,7 @@
 import { Command } from "commander";
 
 import { runLogin } from "./phases/login.js";
+import { runExportStorageState } from "./phases/exportStorageState.js";
 import { runDoctor } from "./phases/doctor.js";
 import { runInventory } from "./phases/inventory.js";
 import { runCopy } from "./phases/copy.js";
@@ -10,6 +11,14 @@ import { runProbeSelectors } from "./phases/probeSelectors.js";
 import { runRepair } from "./phases/repair.js";
 import { runVerify } from "./phases/verify.js";
 import { runCopyPerformance } from "./phases/copyPerformance.js";
+import { runPreflight } from "./phases/preflight.js";
+import { runDelete } from "./phases/delete.js";
+import { runWorkflow } from "./phases/run.js";
+import { runPlaylists } from "./phases/playlists.js";
+import { runMove } from "./phases/move.js";
+import { runChunkedMove } from "./phases/chunkedMove.js";
+import { runCleanup } from "./phases/cleanup.js";
+import { runStatus } from "./phases/status.js";
 
 const program = new Command();
 
@@ -24,6 +33,12 @@ program
   .option("--browser-channel <name>", "Playwright browser channel override, for example chrome")
   .option("--browser-executable-path <path>", "Browser executable path override")
   .option("--browser-cdp-url <url>", "Connect to an already running browser over CDP")
+  .option("--browser-window-width <px>", "Native browser window width for Playwright-launched headed sessions")
+  .option("--browser-window-height <px>", "Native browser window height for Playwright-launched headed sessions")
+  .option("--browser-window-position-x <px>", "Native browser window X position for Playwright-launched headed sessions")
+  .option("--browser-window-position-y <px>", "Native browser window Y position for Playwright-launched headed sessions")
+  .option("--browser-viewport-width <px>", "Browser viewport width for Playwright-launched sessions")
+  .option("--browser-viewport-height <px>", "Browser viewport height for Playwright-launched sessions")
   .option("--headless", "Launch browser headless")
   .option("--slow-mo-ms <ms>", "Playwright slowMo override in milliseconds");
 
@@ -36,16 +51,36 @@ program
   });
 
 program
+  .command("export-storage-state")
+  .description("Export Playwright storage state from the trusted live CDP browser session for headless checks")
+  .option("--output <path>", "Path to write the exported storage state JSON")
+  .option("--json", "Emit machine-readable JSON")
+  .action(async function action() {
+    await runExportStorageState(this);
+  });
+
+program
   .command("doctor")
   .description("Validate local environment, browser session config, and YouTube auth state")
+  .option("--json", "Emit machine-readable JSON for app integrations")
   .action(async function action() {
     await runDoctor(this);
+});
+
+program
+  .command("status")
+  .description("Read the latest or selected run directory and summarize progress")
+  .option("--inspect-run-id <id>", "Specific run id to inspect instead of the latest run")
+  .option("--json", "Print the status summary as JSON")
+  .action(async function action() {
+    await runStatus(this);
   });
 
 program
   .command("setup")
   .description("Ensure the target playlist exists by using the save-to-playlist UI on a Watch Later video")
   .option("--target-playlist <name>", "Playlist name to ensure exists", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
   .action(async function action() {
     await runSetup(this);
   });
@@ -71,9 +106,18 @@ program
   .command("copy")
   .description("Copy source snapshot items into the target playlist using the watch-page save panel")
   .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
   .option("--source-run-id <id>", "Run id containing the inventory snapshot to use as the source of truth")
+  .option("--start-index <index>", "Start processing at this source index", "1")
   .option("--max-items <count>", "Stop after processing this many snapshot rows")
   .option("--milestone-every <count>", "Emit a copy progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per copy item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between copy attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between copy attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between copy items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between copy items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed copy items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
   .option("--resume", "Resume from the checkpoint in the selected run directory")
   .action(async function action() {
     await runCopy(this);
@@ -83,6 +127,7 @@ program
   .command("verify")
   .description("Compare the target playlist and live Watch Later against a saved source snapshot")
   .option("--target-playlist <name>", "Playlist name to verify", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to verify exactly on the Playlists feed page")
   .option("--source-run-id <id>", "Run id containing the inventory snapshot to use as the source of truth")
   .option("--max-items <count>", "Compare only the first N source snapshot rows")
   .option("--max-no-growth-passes <count>", "Number of no-growth scroll passes before stopping", "2")
@@ -95,9 +140,17 @@ program
   .command("repair")
   .description("Retry target-side verification failures from a saved verification report")
   .option("--target-playlist <name>", "Playlist name to repair into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
   .option("--verification-run-id <id>", "Run id containing the verification report to repair from")
   .option("--max-items <count>", "Stop after repairing this many planned items")
   .option("--milestone-every <count>", "Emit a repair progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per repair item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between repair attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between repair attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between repair items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between repair items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed repair items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
   .option("--resume", "Resume from the checkpoint in the selected run directory")
   .action(async function action() {
     await runRepair(this);
@@ -110,6 +163,113 @@ program
   .option("--write-path <path>", "Optional JSON output path override")
   .action(async function action() {
     await runCopyPerformance(this);
+  });
+
+program
+  .command("preflight")
+  .description("Estimate whether a source snapshot is structurally eligible for a real full run and how long copy may take")
+  .requiredOption("--copy-run-id <ids...>", "Copy run ids to use as the performance baseline")
+  .option("--source-run-id <id>", "Run id containing the inventory snapshot to evaluate")
+  .option("--write-path <path>", "Optional JSON output path override")
+  .action(async function action() {
+    await runPreflight(this);
+  });
+
+program
+  .command("delete")
+  .description("Remove verified source snapshot items from Watch Later")
+  .option("--verification-run-id <id>", "Run id containing the verification report to delete from")
+  .option("--max-items <count>", "Stop after deleting this many verified items")
+  .option("--milestone-every <count>", "Emit a delete progress summary every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per delete item before recording failure", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between delete attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between delete attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between delete items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between delete items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed delete items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--resume", "Resume from the checkpoint in the selected run directory")
+  .option("--confirm-delete", "Acknowledge destructive deletion from Watch Later")
+  .action(async function action() {
+    await runDelete(this);
+  });
+
+program
+  .command("playlists")
+  .description("Open the save panel on a Watch Later video and return the currently visible playlists")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runPlaylists(this);
+  });
+
+program
+  .command("run")
+  .description("Run the non-destructive setup, inventory, copy, and verify workflow")
+  .option("--target-playlist <name>", "Playlist name to copy into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
+  .option("--max-items <count>", "Limit the workflow to the first N source items")
+  .option("--milestone-every <count>", "Emit copy progress milestones every N processed items", "5")
+  .option("--max-attempts <count>", "Maximum attempts per copy item inside the workflow", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between workflow copy attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between workflow copy attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between workflow copy items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between workflow copy items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N processed workflow copy items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
+  .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
+  .option("--resume", "Resume from the last completed phase and pass --resume to the copy child")
+  .action(async function action() {
+    await runWorkflow(this);
+  });
+
+program
+  .command("move")
+  .description("Run the full move workflow: setup, inventory, copy, verify, then delete from Watch Later")
+  .option("--target-playlist <name>", "Playlist name to move into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot instead of capturing a new one")
+  .option("--skip-setup", "Skip playlist setup and assume the target playlist already exists")
+  .option("--development-max-items <count>", "Development-only bounded mode: copy and verify only, do not delete from Watch Later")
+  .option("--resume", "Resume from the last completed phase and pass --resume to child copy/delete phases")
+  .option("--max-attempts <count>", "Maximum attempts per mutation item", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between mutation attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between mutation attempts", "8000")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runMove(this);
+  });
+
+program
+  .command("chunked-move")
+  .description("Move Watch Later items to a target playlist in small chunks: copy N, verify N, delete N, repeat")
+  .option("--target-playlist <name>", "Playlist name to move into", "Old Watch")
+  .option("--target-playlist-id <id>", "Playlist id to pre-resolve on the Playlists feed before save-panel selection by title and visibility")
+  .option("--source-run-id <id>", "Use an existing inventory snapshot as the source of truth")
+  .option("--chunk-size <count>", "Number of items to process per chunk", "50")
+  .option("--start-index <index>", "Start at this source snapshot index", "1")
+  .option("--max-items <count>", "Total items to process across all chunks")
+  .option("--inter-chunk-cooldown-ms <ms>", "Cooldown pause between chunks in milliseconds", "60000")
+  .option("--max-attempts <count>", "Maximum attempts per mutation item", "3")
+  .option("--retry-initial-delay-ms <ms>", "Initial retry delay between mutation attempts", "1000")
+  .option("--retry-max-delay-ms <ms>", "Maximum retry delay between mutation attempts", "8000")
+  .option("--jitter-min-ms <ms>", "Minimum random pacing delay between mutation items", "250")
+  .option("--jitter-max-ms <ms>", "Maximum random pacing delay between mutation items", "1250")
+  .option("--cooldown-every <count>", "Insert a cooldown pause every N mutation items", "50")
+  .option("--cooldown-ms <ms>", "Cooldown pause duration in milliseconds", "45000")
+  .option("--resume", "Resume from the checkpoint in the selected run directory")
+  .option("--confirm-delete", "Acknowledge destructive deletion from Watch Later")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runChunkedMove(this);
+  });
+
+program
+  .command("cleanup")
+  .description("Remove unavailable (private/deleted) videos from Watch Later")
+  .option("--json", "Emit machine-readable JSON for app integrations")
+  .action(async function action() {
+    await runCleanup(this);
   });
 
 await program.parseAsync(process.argv);

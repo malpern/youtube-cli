@@ -5,7 +5,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { InventoryItem } from "../models/types.js";
-import { assertUsableSourceSnapshot, computeInventoryFingerprint, readSourceSnapshot, resolveSourceSnapshotPath } from "./sourceSnapshot.js";
+import {
+  ambiguousSourceItemMismatches,
+  assessSourceItemPolicy,
+  assertUsableSourceSnapshot,
+  computeInventoryFingerprint,
+  partitionSourceItems,
+  readSourceSnapshot,
+  resolveSourceSnapshotPath,
+  selectSourceItems
+} from "./sourceSnapshot.js";
 
 const tempDirs: string[] = [];
 
@@ -25,8 +34,11 @@ function writeInventory(rootDir: string, runId: string, items: InventoryItem[]):
       {
         currentUrl: "https://www.youtube.com/playlist?list=WL",
         capturedAt: "2026-03-21T00:00:00.000Z",
+        metadataVersion: 1,
         total: items.length,
         scrollPasses: 1,
+        requestedMaxItems: null,
+        bounded: false,
         items
       },
       null,
@@ -99,8 +111,38 @@ describe("readSourceSnapshot", () => {
     const snapshot = readSourceSnapshot(inventoryPath);
 
     expect(snapshot.runId).toBe("run-a");
+    expect(snapshot.metadataVersion).toBe(1);
+    expect(snapshot.metadataComplete).toBe(true);
     expect(snapshot.total).toBe(2);
+    expect(snapshot.requestedMaxItems).toBeNull();
+    expect(snapshot.bounded).toBe(false);
     expect(snapshot.fingerprint.orderedHash).toBe(computeInventoryFingerprint(snapshot.items).orderedHash);
+  });
+
+  it("marks legacy snapshots without metadata as incomplete", () => {
+    const rootDir = makeTempRoot();
+    const runDir = path.join(rootDir, "runs", "legacy-run");
+    fs.mkdirSync(runDir, { recursive: true });
+    const inventoryPath = path.join(runDir, "inventory.json");
+    fs.writeFileSync(
+      inventoryPath,
+      `${JSON.stringify(
+        {
+          currentUrl: "https://www.youtube.com/playlist?list=WL",
+          capturedAt: "2026-03-21T00:00:00.000Z",
+          total: 1,
+          scrollPasses: 1,
+          items: [makeItem(1)]
+        },
+        null,
+        2
+      )}\n`
+    );
+
+    const snapshot = readSourceSnapshot(inventoryPath);
+
+    expect(snapshot.metadataVersion).toBeNull();
+    expect(snapshot.metadataComplete).toBe(false);
   });
 });
 
@@ -110,8 +152,12 @@ describe("assertUsableSourceSnapshot", () => {
       runId: "run-a",
       currentUrl: "",
       capturedAt: "",
+      metadataVersion: 1,
+      metadataComplete: true,
       total: 1,
       scrollPasses: 1,
+      requestedMaxItems: null,
+      bounded: false,
       fingerprint: computeInventoryFingerprint([makeItem(1)]),
       items: [makeItem(1)]
     };
@@ -124,8 +170,12 @@ describe("assertUsableSourceSnapshot", () => {
       runId: "run-empty",
       currentUrl: "",
       capturedAt: "",
+      metadataVersion: 1,
+      metadataComplete: true,
       total: 0,
       scrollPasses: 0,
+      requestedMaxItems: null,
+      bounded: false,
       fingerprint: computeInventoryFingerprint([]),
       items: []
     };
@@ -172,5 +222,86 @@ describe("resolveSourceSnapshotPath", () => {
     const rootDir = makeTempRoot();
 
     expect(() => resolveSourceSnapshotPath(rootDir, "current-run", "missing-run")).toThrow(/Source snapshot not found/);
+  });
+});
+
+describe("selectSourceItems", () => {
+  it("returns all items from the start index onward", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2), makeItem(3)], { startIndex: 2 })).toEqual([makeItem(2), makeItem(3)]);
+  });
+
+  it("applies max-items after start-index filtering", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2), makeItem(3), makeItem(4)], { startIndex: 2, maxItems: 2 })).toEqual([
+      makeItem(2),
+      makeItem(3)
+    ]);
+  });
+
+  it("defaults to the full item list when no bounds are provided", () => {
+    expect(selectSourceItems([makeItem(1), makeItem(2)], {})).toEqual([makeItem(1), makeItem(2)]);
+  });
+});
+
+describe("assessSourceItemPolicy", () => {
+  it("marks normal rows as copyable", () => {
+    expect(assessSourceItemPolicy(makeItem(1))).toEqual({
+      policy: "copyable",
+      reason: "has-copyable-video-url"
+    });
+  });
+
+  it("marks private/deleted/unavailable rows as expected non-copyable", () => {
+    expect(assessSourceItemPolicy(makeItem(1, { unavailableKind: "private", videoUrl: null, videoId: null }))).toEqual({
+      policy: "expected-non-copyable",
+      reason: "private"
+    });
+
+    expect(assessSourceItemPolicy(makeItem(2, { unavailableKind: "deleted", videoUrl: null, videoId: null }))).toEqual({
+      policy: "expected-non-copyable",
+      reason: "deleted"
+    });
+  });
+
+  it("marks unknown or missing-url rows as ambiguous", () => {
+    expect(assessSourceItemPolicy(makeItem(1, { unavailableKind: "unknown", videoUrl: null, videoId: null }))).toEqual({
+      policy: "ambiguous-unavailable",
+      reason: "unknown-unavailable-state"
+    });
+
+    expect(assessSourceItemPolicy(makeItem(2, { unavailableKind: "none", videoUrl: null }))).toEqual({
+      policy: "ambiguous-unavailable",
+      reason: "missing-video-url"
+    });
+  });
+});
+
+describe("partitionSourceItems", () => {
+  it("splits source items by policy", () => {
+    const partitioned = partitionSourceItems([
+      makeItem(1),
+      makeItem(2, { unavailableKind: "private", videoUrl: null, videoId: null }),
+      makeItem(3, { unavailableKind: "unknown", videoUrl: null, videoId: null })
+    ]);
+
+    expect(partitioned.copyableItems.map((item) => item.sourceIndex)).toEqual([1]);
+    expect(partitioned.expectedNonCopyableItems.map((item) => item.sourceIndex)).toEqual([2]);
+    expect(partitioned.ambiguousItems.map((item) => item.sourceIndex)).toEqual([3]);
+  });
+});
+
+describe("ambiguousSourceItemMismatches", () => {
+  it("turns ambiguous items into verification mismatches", () => {
+    expect(
+      ambiguousSourceItemMismatches([
+        makeItem(7, { title: null, videoId: null, videoUrl: null, unavailableKind: "unknown" })
+      ])
+    ).toEqual([
+      {
+        sourceIndex: 7,
+        field: "ambiguous-source-item",
+        expected: "unknown",
+        actual: null
+      }
+    ]);
   });
 });

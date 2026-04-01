@@ -20,7 +20,7 @@ Use a dedicated browser profile for this project.
 
 The validated local path is:
 
-`/Users/malpern/local-code/youtube-watchlist/.local/chrome-youtube-profile`
+`/Users/malpern/local-code/youtube-cli/.local/chrome-youtube-profile`
 
 This profile is used only for:
 

@@ -1,5 +1,5 @@
 import type { InventoryItem } from "../models/types.js";
-import type { VerificationReport } from "./verificationReport.js";
+import type { VerificationReport } from "./verification.js";
 
 export interface RepairPlan {
   blockedReasons: string[];

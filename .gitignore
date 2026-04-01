@@ -5,3 +5,5 @@ runs/
 output-playlist-more-actions.png
 .DS_Store
 *.log
+macos/**/.build/
+macos/**/.DS_Store
