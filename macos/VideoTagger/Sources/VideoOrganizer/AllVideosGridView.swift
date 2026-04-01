@@ -86,7 +86,7 @@ struct AllVideosGridView: View {
             LazyVGrid(columns: gridColumns, spacing: 16) {
                 ForEach(section.videos) { video in
                     Button { selectVideo(video.id, proxy: proxy) } label: {
-                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL, showChannel: displaySettings.showChannelName, showChannelIcon: displaySettings.showChannelIcon)
+                        VideoGridItem(video: video, isSelected: selectedVideoId == video.id, cacheDir: thumbnailCache.cacheDirURL, showChannel: displaySettings.showChannelName, showChannelIcon: displaySettings.showChannelIcon, size: displaySettings.thumbnailSize)
                     }
                     .buttonStyle(.plain)
                     .onDoubleClick { openOnYouTube(video) }
@@ -258,6 +258,7 @@ struct VideoGridItem: View {
     let cacheDir: URL
     let showChannel: Bool
     let showChannelIcon: Bool
+    let size: Double
 
     private var cachedImage: NSImage? {
         let path = cacheDir.appendingPathComponent("\(video.id).jpg")
@@ -265,32 +266,59 @@ struct VideoGridItem: View {
         return NSImage(contentsOf: path)
     }
 
+    private var titleFont: Font {
+        if size < 160 { return .system(size: 9, weight: .medium) }
+        if size < 220 { return .caption.weight(.medium) }
+        if size < 300 { return .subheadline.weight(.medium) }
+        return .body.weight(.medium)
+    }
+
+    private var channelFont: Font {
+        if size < 160 { return .system(size: 8) }
+        if size < 220 { return .caption2 }
+        if size < 300 { return .caption }
+        return .subheadline
+    }
+
+    private var titleHeight: CGFloat {
+        if size < 160 { return 22 }
+        if size < 220 { return 32 }
+        if size < 300 { return 38 }
+        return 44
+    }
+
+    private var cornerRadius: CGFloat {
+        if size < 160 { return 4 }
+        if size < 300 { return 6 }
+        return 8
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: size < 200 ? 3 : 6) {
             thumbnailView
                 .aspectRatio(16/9, contentMode: .fit)
-                .clipShape(.rect(cornerRadius: 6))
+                .clipShape(.rect(cornerRadius: cornerRadius))
                 .overlay {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.accentColor, lineWidth: 3)
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(Color.accentColor, lineWidth: size < 200 ? 2 : 3)
                     }
                 }
 
             Text(video.title)
-                .font(.caption.weight(.medium))
+                .font(titleFont)
                 .lineLimit(2)
-                .frame(height: 32, alignment: .top)
+                .frame(height: titleHeight, alignment: .top)
 
             if showChannel, let channel = video.channelName {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     if showChannelIcon {
                         Image(systemName: "person.circle.fill")
-                            .font(.caption2)
+                            .font(channelFont)
                             .foregroundStyle(.tertiary)
                     }
                     Text(channel)
-                        .font(.caption2)
+                        .font(channelFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
