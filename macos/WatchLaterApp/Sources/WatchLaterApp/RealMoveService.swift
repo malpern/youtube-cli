@@ -68,6 +68,12 @@ struct RealMoveService: MoveService {
                         let event = try Self.decodeMoveEvent(from: lineData, state: state)
                         continuation.yield(event)
                     } catch {
+                        // If we already have the result, ignore trailing decode errors
+                        // (partial lines or non-JSON output flushed at process exit)
+                        if state.didEmitResult {
+                            log.warning("Ignoring trailing decode error after result: \(error.localizedDescription, privacy: .public)")
+                            continue
+                        }
                         continuation.finish(throwing: error)
                         return
                     }

@@ -11,4 +11,5 @@ struct MockAuthService: AuthService {
     }
 
     func openLogin() async throws {}
+    func restartBrowser() async throws {}
 }

@@ -267,6 +267,10 @@ final class TransferViewModel {
         latestResult?.ok == true
     }
 
+    var canAcknowledgeCompletion: Bool {
+        latestResult != nil && !isRunningTransfer
+    }
+
     var thumbnailAccessibilityLabel: String {
         if latestResult?.ok == true {
             return "Migration complete preview"

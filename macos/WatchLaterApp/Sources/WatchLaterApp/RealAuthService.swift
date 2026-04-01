@@ -22,6 +22,11 @@ struct RealAuthService: AuthService {
         log.info("Chrome login launched successfully")
     }
 
+    func restartBrowser() async throws {
+        log.info("Restarting automation browser")
+        try await openLogin()
+    }
+
     private func buildResult(from response: DoctorResponse) -> AuthCheckResult {
         let browserLaunch = response.checks.first(where: { $0.name == "browser.launch" })
         let youtubeAuth = response.checks.first(where: { $0.name == "youtube.auth" })

@@ -23,4 +23,13 @@ struct AppAuthService: AuthService {
             try await realService.openLogin()
         }
     }
+
+    func restartBrowser() async throws {
+        switch preferences.backendMode {
+        case .mock:
+            try await mockService.restartBrowser()
+        case .real:
+            try await realService.restartBrowser()
+        }
+    }
 }
