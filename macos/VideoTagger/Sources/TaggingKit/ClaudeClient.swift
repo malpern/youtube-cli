@@ -7,7 +7,7 @@ public actor ClaudeClient {
 
     public enum Model: String, Sendable {
         case haiku = "claude-haiku-4-5-20251001"
-        case sonnet = "claude-sonnet-4-6-20250627"
+        case sonnet = "claude-sonnet-4-6"
     }
 
     public init(apiKey: String) {
@@ -15,10 +15,39 @@ public actor ClaudeClient {
     }
 
     public init() throws {
-        guard let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] else {
-            throw ClaudeClientError.missingAPIKey
+        // 1. macOS Keychain (preferred — user explicitly stored it)
+        if let key = Self.readFromKeychain() {
+            self.apiKey = key
+            return
         }
-        self.apiKey = key
+
+        // 2. Environment variable fallback
+        if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty, key.hasPrefix("sk-ant-") {
+            self.apiKey = key
+            return
+        }
+
+        throw ClaudeClientError.missingAPIKey
+    }
+
+    private static func readFromKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "anthropic-api-key",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let data = result as? Data,
+              let key = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     public func complete(
@@ -45,6 +74,7 @@ public actor ClaudeClient {
 
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
+        request.timeoutInterval = 120
         request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.addValue("application/json", forHTTPHeaderField: "content-type")

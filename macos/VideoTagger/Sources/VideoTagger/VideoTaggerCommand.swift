@@ -28,8 +28,16 @@ struct Suggest: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Number of topics to suggest.")
     var topics: Int = 12
 
+    @Option(name: .long, help: "Anthropic API key (or set ANTHROPIC_API_KEY env var).")
+    var apiKey: String?
+
     func run() async throws {
-        let client = try ClaudeClient()
+        let client: ClaudeClient
+        if let apiKey {
+            client = ClaudeClient(apiKey: apiKey)
+        } else {
+            client = try ClaudeClient()
+        }
         let store = try TopicStore(path: db)
         let suggester = TopicSuggester(client: client)
 
@@ -37,26 +45,34 @@ struct Suggest: AsyncParsableCommand {
         try store.importVideos(snapshot.items)
         print("Imported \(snapshot.items.count) videos")
 
-        print("Asking Claude to organize into \(topics) topics...")
-        let result = try await suggester.suggestTopics(
+        let result = try await suggester.suggestAndClassify(
             videos: snapshot.items,
             targetTopicCount: topics
-        ) { batch, total in
-            print("  Batch \(batch)/\(total)...")
+        ) { status in
+            print("  \(status)")
         }
 
-        for topic in result.topics {
-            let topicId = try store.createTopic(name: topic.name)
-            try store.assignVideos(indices: topic.videoIndices, toTopic: topicId)
+        // Store topics and assignments
+        var topicIds: [String: Int64] = [:]
+        for name in result.topics {
+            topicIds[name] = try store.createTopic(name: name)
         }
 
+        for assignment in result.assignments {
+            if let tid = topicIds[assignment.topic] {
+                try store.assignVideo(videoId: snapshot.items[assignment.videoIndex].videoId ?? "", toTopic: tid)
+            }
+        }
+
+        // Print summary
+        let storedTopics = try store.listTopics()
         let unassigned = try store.unassignedCount()
-        print("\nCreated \(result.topics.count) topics:")
-        for topic in result.topics {
-            print(String(format: "  %4d  %@", topic.videoIndices.count, topic.name))
+        print("\nTopics (\(storedTopics.count)):")
+        for topic in storedTopics {
+            print(String(format: "  [%2d] %4d videos  %@", topic.id, topic.videoCount, topic.name))
         }
         if unassigned > 0 {
-            print("  \(unassigned) unassigned")
+            print(String(format: "       %4d unassigned", unassigned))
         }
         print("\nSaved to \(db). Use 'topics' to list, 'preview <id>' to browse.")
     }
