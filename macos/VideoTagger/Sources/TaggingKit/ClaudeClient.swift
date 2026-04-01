@@ -14,20 +14,54 @@ public actor ClaudeClient {
         self.apiKey = apiKey
     }
 
+    /// Cached key to avoid repeated keychain prompts
+    nonisolated(unsafe) private static var cachedKey: String?
+
     public init() throws {
-        // 1. macOS Keychain (preferred — user explicitly stored it)
-        if let key = Self.readFromKeychain() {
+        if let cached = Self.cachedKey {
+            self.apiKey = cached
+            return
+        }
+
+        // 1. Config file: ~/.config/anthropic/api-key
+        if let key = Self.readFromConfigFile() {
+            Self.cachedKey = key
             self.apiKey = key
             return
         }
 
-        // 2. Environment variable fallback
+        // 2. macOS Keychain
+        if let key = Self.readFromKeychain() {
+            Self.cachedKey = key
+            self.apiKey = key
+            return
+        }
+
+        // 3. Environment variable fallback
         if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty, key.hasPrefix("sk-ant-") {
+            Self.cachedKey = key
             self.apiKey = key
             return
         }
 
         throw ClaudeClientError.missingAPIKey
+    }
+
+    private static func readFromConfigFile() -> String? {
+        let paths = [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/anthropic/api-key"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".anthropic-api-key")
+        ]
+
+        for path in paths {
+            if let contents = try? String(contentsOf: path, encoding: .utf8) {
+                let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("sk-ant-") {
+                    return trimmed
+                }
+            }
+        }
+        return nil
     }
 
     private static func readFromKeychain() -> String? {

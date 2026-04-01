@@ -5,6 +5,7 @@ struct TopicDetailView: View {
     let topic: TopicViewModel
     @State private var videos: [VideoViewModel] = []
     @State private var searchText = ""
+    @State private var thumbnailSize: Double = 220
 
     private var filteredVideos: [VideoViewModel] {
         guard !searchText.isEmpty else { return videos }
@@ -14,9 +15,9 @@ struct TopicDetailView: View {
         }
     }
 
-    private let gridColumns = [
-        GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 16)
-    ]
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: thumbnailSize, maximum: thumbnailSize + 60), spacing: 16)]
+    }
 
     var body: some View {
         ScrollView {
@@ -35,6 +36,17 @@ struct TopicDetailView: View {
             ToolbarItemGroup {
                 if store.isLoading {
                     ProgressView().controlSize(.small)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $thumbnailSize, in: 120...400, step: 20)
+                        .frame(width: 100)
+                    Image(systemName: "photo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Menu {
